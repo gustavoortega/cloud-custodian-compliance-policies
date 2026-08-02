@@ -5,7 +5,8 @@
 ```
 git clone https://github.com/gustavoortega/cloud-custodian-compliance-policies
 cd cloud-custodian-compliance-policies
-python -m venv .venv && .venv/bin/pip install c7n c7n-kit pytest
+python -m venv .venv
+.venv/bin/pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
 .venv/bin/pytest -q                                  # 217 tests, no AWS account
 .venv/bin/c7n-kit coverage catalogs/fsbp.txt policies/aws
 ```
