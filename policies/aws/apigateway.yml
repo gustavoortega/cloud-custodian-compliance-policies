@@ -1,0 +1,291 @@
+policies:
+- name: api-gateway-method-without-authorization
+  resource: aws.rest-resource
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 8.3.1
+    - 'SOX ITGC: Access'
+    - FSBP APIGateway.8
+    frequency: 4h
+  description: 'API Gateway methods with no authorization: authorizationType NONE and no API key
+
+    required. They are compute endpoints open to the internet.
+
+
+    The companion api-gateway-internet-facing control only looks at whether the
+
+    endpoint is edge or private, not at whether it asks for credentials. An edge API
+
+    with an authorizer is correct; one without an authorizer is an open door.
+
+
+    Evaluated per method by the `unauthenticated-method` custom filter. The
+
+    declarative version was wrong in both directions -- see
+
+    extensions/c7n_pack/filters/apigw_unauth.py for the details. CORS OPTIONS
+
+    methods are legitimately NONE by protocol design and are excluded; APIs that are
+
+    PRIVATE or not deployed to any stage cannot be called and are dropped.
+
+    '
+  filters:
+  - type: unauthenticated-method
+- name: apigw-rest-stage-execution-logging-disabled
+  resource: aws.rest-stage
+  metadata:
+    severity: info
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP APIGateway.1
+  description: 'REST API stages with no method setting anywhere in the stage carrying
+
+    `loggingLevel` ERROR or INFO (execution logging never turned on for that
+
+    stage, whether via the blanket `*/*` method or any per-path override).
+
+    Execution logging is off by default on a new stage, so this control
+
+    describes the whole stage population: a METRIC, not a per-stage ticket
+
+    queue.
+
+
+    FSBP APIGateway.1 also covers WebSocket API stages (aws.apigwv2-stage,
+
+    DefaultRouteSettings.LoggingLevel). That half is not written as a
+
+    separate policy here -- flagged as a known gap in this family''s coverage.
+
+    '
+  filters:
+  - type: value
+    key: values(methodSettings) | [?loggingLevel=='ERROR' || loggingLevel=='INFO']
+    value: empty
+- name: apigw-rest-stage-without-client-certificate
+  resource: aws.rest-stage
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP APIGateway.2
+  description: 'REST API stages with no client certificate configured for backend
+
+    authentication. Most APIs never need mutual TLS to their own backend, so
+
+    an unset `clientCertificateId` is the default state: a METRIC, not a
+
+    per-stage ticket queue.
+
+
+    On absence being real and not a collection artefact: optional stage fields
+
+    (webAclArn, accessLogSettings, cacheClusterSize) are returned by
+
+    get_stages whenever they are set, so a missing `clientCertificateId` means
+
+    no client certificate is attached, not that the field was dropped on the
+
+    way in. Note also that client certificates are their own c7n resource type
+
+    (rest-client-certificate): one existing in the account says nothing about
+
+    whether any stage uses it.
+
+    '
+  filters:
+  - type: value
+    key: clientCertificateId
+    value: absent
+- name: apigw-rest-stage-xray-tracing-disabled
+  resource: aws.rest-stage
+  metadata:
+    severity: info
+    category: detection
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP APIGateway.3
+  description: 'REST API stages with AWS X-Ray active tracing disabled
+
+    (`tracingEnabled`). The default is off, so this is a METRIC across the
+
+    whole stage population rather than a per-stage ticket queue.
+
+
+    A single `value: empty` filter, not an `or: [false, absent]` pair:
+
+    `deploymentId` -- the field c7n uses as this resource''s identifier -- is
+
+    NOT unique across stages, because two stages promoted from the same
+
+    deployment (blue/green, or a stage created from another) carry the same
+
+    value. `or:`/`not:` composition in c7n deduplicates matches by that
+
+    identifier, so a stage sharing a `deploymentId` with another matched
+
+    stage silently disappears from the result. Verified directly against real
+
+    data: the `or:` form under-reported, and the single-filter form -- which
+
+    is equivalent for a boolean-or-absent check, since `not r` is true for
+
+    both `False` and `None` -- returned the complete set.
+
+    '
+  filters:
+  - type: value
+    key: tracingEnabled
+    value: empty
+- name: apigw-rest-stage-without-waf
+  resource: aws.rest-stage
+  metadata:
+    severity: info
+    category: exposure
+    owner_tag: resource-owner
+    frequency: 4h
+    frameworks:
+    - FSBP APIGateway.4
+  description: 'REST API stages with no AWS WAF web ACL associated (`webAclArn` empty).
+
+    Associating a web ACL is opt-in, so the population-wide view is a METRIC
+
+    rather than a per-stage ticket queue -- but this is kept on the 4h cadence
+
+    anyway: an API stage losing its WAF is the same class of live,
+
+    internet-facing exposure as the other WAF-association controls running at
+
+    4h in this repo (alb-wafv2-disabled,
+
+    cloudfront-distribution-without-waf), where time-to-detection matters more
+
+    than the per-row severity label.
+
+
+    A single `value: empty` filter, not `or: [empty, absent]`: this
+
+    resource''s identifier (`deploymentId`) is not unique across stages (see
+
+    apigw-rest-stage-xray-tracing-disabled), and `or:` composition
+
+    deduplicates by identifier, silently dropping a stage that shares one with
+
+    another match. `value: empty` alone already matches both an empty string
+
+    and a missing key (`not r` is true for both), so no composition is needed.
+
+    '
+  filters:
+  - type: value
+    key: webAclArn
+    value: empty
+- name: apigw-rest-stage-cache-not-encrypted
+  resource: aws.rest-stage
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP APIGateway.5
+  description: 'REST API stages with at least one method that has caching enabled but the
+
+    cache not encrypted. Caching can be turned on either through the blanket
+
+    `*/*` method setting or through a per-path override, and both shapes occur
+
+    in practice, which is why the filter walks every entry of methodSettings
+
+    rather than only the wildcard one.
+
+    '
+  filters:
+  - type: value
+    key: values(methodSettings)[?cachingEnabled && !cacheDataEncrypted]
+    value: not-null
+- name: apigwv2-stage-access-logging-disabled
+  resource: aws.apigwv2-stage
+  metadata:
+    severity: medium
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 10.4.2
+    - FSBP APIGateway.9
+  description: 'API Gateway V2 (HTTP/WebSocket API) stages with no access logging
+
+    configured (`AccessLogSettings` absent). Note that `aws.apigwv2-stage` is a
+
+    distinct resource type from `aws.rest-stage`: an inventory that only
+
+    collects REST stages does not see these at all, so make sure the type is
+
+    actually enumerated in every account and region before reading a low
+
+    result as good news.
+
+    '
+  filters:
+  - type: value
+    key: AccessLogSettings
+    value: absent
+- name: apigw-domain-name-tls-policy-not-recommended
+  resource: aws.apigw-domain-name
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP APIGateway.11
+  description: 'API Gateway custom domain names not using one of the currently
+
+    recommended TLS security policies. The older `TLS_1_2` and
+
+    `SecurityPolicy_TLS12_2018_EDGE` values fail: the control asks for a TLS
+
+    1.3-era policy, and the accepted set differs between REGIONAL and EDGE
+
+    domain names, which is why the list below carries both spellings.
+
+    '
+  filters:
+  - type: value
+    key: securityPolicy
+    op: not-in
+    value:
+    - SecurityPolicy_TLS13_1_3_2025_09
+    - SecurityPolicy_TLS13_1_3_FIPS_2025_09
+    - SecurityPolicy_TLS13_1_2_PFS_PQ_2025_09
+    - SecurityPolicy_TLS13_2025_EDGE
+    - SecurityPolicy_TLS12_PFS_2025_EDGE
+- name: api-gateway-internet-facing
+  resource: rest-api
+  metadata:
+    frequency: daily
+  description: 'REST APIs whose endpoint type is EDGE or REGIONAL rather than
+
+    PRIVATE. The default invoke URL is reachable from the public
+
+    internet unless a resource policy on the API restricts it.
+
+    '
+  filters:
+  - type: value
+    key: endpointConfiguration.types[0]
+    value: present
+  - type: value
+    key: endpointConfiguration.types[0]
+    value: PRIVATE
+    op: not-equal

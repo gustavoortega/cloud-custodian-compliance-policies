@@ -1,0 +1,29 @@
+policies:
+- name: firehose-delivery-stream-not-encrypted
+  resource: aws.firehose
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP DataFirehose.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Data Firehose delivery streams without server-side encryption. Delivery
+
+    streams routinely carry security telemetry, so the contents are worth
+
+    encrypting at rest even when the destination is.
+
+
+    `DeliveryStreamEncryptionConfiguration.Status` is populated with an
+
+    explicit value (not absent) on streams where encryption was never turned
+
+    on, so `op: ne` is safe here rather than the usual absent-key trap.
+
+    '
+  filters:
+  - type: value
+    key: DeliveryStreamEncryptionConfiguration.Status
+    op: ne
+    value: ENABLED

@@ -1,0 +1,84 @@
+name: ci
+
+# No secrets, no OIDC, no cloud role. Everything here runs offline.
+# A policy repository whose CI cannot be used to reach an AWS account.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'   # weekly, to catch c7n releases and framework drift
+
+permissions:
+  contents: read
+
+jobs:
+  schema:
+    name: policies build against c7n
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The last three c7n minors. A filter that silently changes
+        # behaviour across a release is this repo's real failure mode.
+        c7n: ['0.9.49', '0.9.50', '0.9.51']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install "c7n==${{ matrix.c7n }}" c7n-org
+      - name: custodian validate
+        run: |
+          export PYTHONPATH="$PWD/extensions"
+          python -c "import c7n_pack"          # registers the custom filters
+          custodian validate policies/aws/*.yml
+
+  metadata:
+    name: every policy declares its metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml jsonschema
+      - name: required fields present and well typed
+        run: python ci/check_metadata.py
+
+  coverage:
+    name: no orphan control IDs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install c7n c7n-kit
+      # Gated on FSBP only: it is the one catalogue that is complete.
+      # An incomplete catalogue produces orphans that are not orphans, so
+      # failing on those would train everyone to ignore the gate.
+      - run: c7n-kit coverage catalogs/fsbp.txt policies/aws
+      # The rest are reported, never gated.
+      - run: c7n-kit coverage catalogs/pci-4.0.txt policies/aws || true
+      - run: c7n-kit coverage catalogs/cis-aws.txt policies/aws || true
+
+  tests:
+    name: behavioural tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install c7n c7n-kit pytest
+      # Two hash seeds on purpose: c7n's `or`/`not` filters return their
+      # matches through a set, so the order depends on string hashing. A
+      # test asserting an unsorted list passes on one seed and fails on
+      # another. Running two seeds catches that on the PR, not in a month.
+      - run: PYTHONHASHSEED=0 pytest -q
+      - run: PYTHONHASHSEED=31337 pytest -q

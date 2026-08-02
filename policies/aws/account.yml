@@ -1,0 +1,691 @@
+policies:
+- name: account-cloudtrail-multiregion-disabled
+  resource: aws.account
+  metadata:
+    severity: critical
+    category: logging
+    frameworks:
+    - CIS 3.1
+    - PCI 10.2.1
+    - 'SOX ITGC: Operations'
+    - FSBP CloudTrail.1
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Accounts with no CloudTrail trail that is multi-region, active and capturing
+
+    global events. An account without a trail is a total blind spot for incident
+
+    investigation. CIS AWS Foundations 3.1.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: check-cloudtrail
+    multi-region: true
+    running: true
+    global-events: true
+- name: account-config-recorder-off
+  resource: aws.account
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - CIS 3.5
+    - PCI 10.2.1
+    - 'SOX ITGC: Change'
+    - FSBP Config.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts where AWS Config is not recording all resources. Without Config there
+
+    is no configuration history to work from during forensics.
+
+    CIS AWS Foundations 3.5.
+
+    '
+  filters:
+  - type: check-config
+    all-resources: true
+    running: true
+- name: account-guardduty-disabled
+  resource: aws.account
+  metadata:
+    severity: high
+    category: detection
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 11.5.1
+    - 'SOX ITGC: Operations'
+    - FSBP GuardDuty.1
+    frequency: daily
+  description: 'Accounts or regions where GuardDuty is not enabled. It is the only native
+
+    detection of malicious activity inside the account.
+
+    '
+  filters:
+  - not:
+    - type: guard-duty
+      Detector.Status: ENABLED
+- name: account-access-analyzer-missing
+  resource: aws.account
+  metadata:
+    severity: medium
+    category: detection
+    frameworks:
+    - CIS 1.20
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts with no active IAM Access Analyzer. It is the native detector of
+
+    resources shared outside the organisation. CIS AWS Foundations 1.20.
+
+    '
+  filters:
+  - not:
+    - type: access-analyzer
+      key: status
+      value: ACTIVE
+- name: account-root-access-key-present
+  resource: aws.account
+  metadata:
+    severity: critical
+    category: identity
+    frameworks:
+    - CIS 1.4
+    - PCI 8.2.2
+    - 'SOX ITGC: Access'
+    - FSBP IAM.4
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Accounts whose root user has active access keys. Compromising root is game over
+
+    for the account, and root keys should not exist at all.
+
+    CIS AWS Foundations 1.4.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: iam-summary
+    key: AccountAccessKeysPresent
+    value: 0
+    op: gt
+- name: account-root-mfa-disabled
+  resource: aws.account
+  metadata:
+    severity: high
+    category: identity
+    frameworks:
+    - CIS 1.5
+    - PCI 8.4
+    - 'SOX ITGC: Access'
+    - FSBP IAM.6
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts where the root user CAN SIGN IN and has no MFA.
+
+    CIS AWS Foundations 1.5.
+
+
+    The second condition is not optional. In an organisation with centralised root
+
+    management, member accounts have no root credentials at all:
+
+    AccountPasswordPresent=0 means root has NO password, so there is no way to
+
+    authenticate as root and MFA is irrelevant. That is BETTER than having MFA, not
+
+    worse.
+
+
+    Those accounts report AccountMFAEnabled=0 as well, so without the second filter
+
+    the control reports every centrally-managed member account for something that
+
+    does not apply to it, and the real finding -- an account with a usable root and
+
+    no MFA -- is buried under them.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: iam-summary
+    key: AccountMFAEnabled
+    value: 0
+    op: eq
+  - type: iam-summary
+    key: AccountPasswordPresent
+    value: 1
+    op: eq
+- name: account-password-policy-weak
+  resource: aws.account
+  metadata:
+    severity: medium
+    category: identity
+    frameworks:
+    - CIS 1.8
+    - PCI 8.3.6
+    - 'SOX ITGC: Access'
+    - FSBP IAM.7
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts whose IAM password policy falls short of the CIS minimum: length 14
+
+    and reuse prevention 24. CIS AWS Foundations 1.8 and 1.9.
+
+
+    The first branch of the `or` is NOT redundant: when the account has no password
+
+    policy configured at all, get_account_password_policy raises NoSuchEntity and
+
+    c7n annotates only {''PasswordPolicyConfigured'': False}. In that case
+
+    MinimumPasswordLength does not exist, evaluates to None, and `None lt 14` is
+
+    False -- so without that branch an account with NO policy whatsoever, the worst
+
+    possible case, passed as compliant. Verified against the ValueFilter of
+
+    c7n 0.9.51.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - or:
+    - type: password-policy
+      key: PasswordPolicyConfigured
+      value: false
+    - type: password-policy
+      key: MinimumPasswordLength
+      value: 14
+      op: lt
+    - type: password-policy
+      key: PasswordReusePrevention
+      value: 24
+      op: lt
+- name: vpc-block-public-access-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.172
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts/regions where VPC Block Public Access (InternetGatewayBlockMode)
+
+    is off.
+
+
+    Off is the AWS default, so wherever it has not been enabled this control
+
+    describes every account/region rather than an anomaly inside the estate:
+
+    it is a METRIC, not a per-resource ticket queue, which is why it is
+
+    scored `info`. Re-score it once adoption is partial: at that point the
+
+    account/regions still off are the outliers.
+
+
+    VPC BPA blocks internet gateway traffic to resources in VPCs that lack an
+
+    explicit exception, at the account/region level, regardless of individual
+
+    security group or NACL rules. "Disabled" here means the estate relies
+
+    entirely on SG/NACL/route-table hygiene for that backstop -- it does not
+
+    mean any VPC is currently exposed; that is a separate, resource-level
+
+    control.
+
+    '
+  filters:
+  - type: vpc-block-public-access
+    state: false
+- name: ebs-snapshot-block-public-access-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.182
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts/regions where the EBS snapshot Block Public Access setting
+
+    (GetSnapshotBlockPublicAccessState) is "unblocked".
+
+
+    "Unblocked" is the AWS default, so wherever it has not been changed this
+
+    control describes the whole estate rather than an anomaly within it: a
+
+    METRIC, not a per-resource ticket queue, hence `info`. Re-score once some
+
+    accounts/regions block and others do not.
+
+
+    With this off, nothing prevents someone from sharing an EBS snapshot
+
+    publicly account-wide; it does not mean any snapshot IS currently shared
+
+    that way -- that is a separate, resource-level control
+
+    (inventory-ebs-snapshots-shared-cross-account in ebs-encryption.yaml
+
+    covers cross-account sharing, though not public sharing specifically).
+
+    '
+  filters:
+  - type: ebs-snapshot-block-public-access
+    state: false
+- name: guardduty-eks-audit-logs-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with EKS Audit Log Monitoring disabled. AWS rates
+
+    this control High, but the feature is off by default, so on an estate
+
+    that never enabled it this control describes every detector rather than
+
+    an anomaly among them: a METRIC, not a per-resource ticket queue, hence
+
+    severity info. See the file header for the JMESPath/absence reasoning
+
+    shared by all nine GuardDuty policies here.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='EKS_AUDIT_LOGS'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-lambda-protection-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.6
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with Lambda Protection disabled. Lambda Protection is
+
+    what would catch a compromised function making anomalous network calls;
+
+    wherever it is off, that class of finding simply cannot fire. Off is the
+
+    default, so this is a METRIC of rollout state, not a per-resource ticket
+
+    queue.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='LAMBDA_NETWORK_LOGS'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-eks-runtime-monitoring-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.7
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with EKS Runtime Monitoring (automated agent
+
+    management) disabled.
+
+
+    This is a DIFFERENT feature from EKS Audit Log Monitoring
+
+    (GuardDuty.5): audit logs come from the Kubernetes control plane; this
+
+    one is the node-level runtime agent that sees process/file/network
+
+    activity inside the cluster. It nests under the `EKS_RUNTIME_MONITORING`
+
+    feature, so the key pipes through a `[0]` projection:
+
+    `Features[?Name==''EKS_RUNTIME_MONITORING'']|[0].AdditionalConfiguration
+
+    [?Name==''EKS_ADDON_MANAGEMENT''].Status`. Without the pipe, chaining a
+
+    filter expression directly into `.AdditionalConfiguration` does not
+
+    parse the way a dotted path would; verified against a synthetic
+
+    detector with the parent feature entirely absent, present-but-childless,
+
+    and both enabled/disabled -- all four resolve correctly to "not
+
+    enabled" except the true positive.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='EKS_RUNTIME_MONITORING']|[0].AdditionalConfiguration[?Name=='EKS_ADDON_MANAGEMENT'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-malware-protection-ec2-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with Malware Protection for EC2 (EBS scan-on-finding)
+
+    disabled. Without it, a suspicious-instance finding does not trigger an
+
+    EBS malware scan, so a real compromise in that account/region is
+
+    investigated blind. Off is the default, so this is a METRIC of rollout
+
+    state, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='EBS_MALWARE_PROTECTION'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-rds-protection-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.9
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with RDS Protection (Aurora login-activity
+
+    profiling) disabled. A METRIC of rollout state rather than a ticket
+
+    queue, since off is the default; see the file header for why absence of
+
+    the feature key is also treated as disabled.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='RDS_LOGIN_EVENTS'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-s3-protection-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with S3 Protection disabled. This is the feature
+
+    that watches S3 data-plane events (GetObject/PutObject patterns, not
+
+    just management events) for anomalies; where it is off, GuardDuty is not
+
+    looking at object-level activity in any bucket at all. A METRIC of
+
+    rollout state, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='S3_DATA_EVENTS'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-runtime-monitoring-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.11
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with the general Runtime Monitoring feature
+
+    disabled. This is the parent feature that EC2 Runtime Monitoring
+
+    (GuardDuty.13) and ECS Runtime Monitoring (GuardDuty.12) nest under --
+
+    wherever this one is off, both of those are structurally impossible to
+
+    have enabled, so expect those two policies to report the same cells.
+
+    A METRIC of rollout state, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='RUNTIME_MONITORING'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-ecs-runtime-monitoring-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with ECS/Fargate Runtime Monitoring disabled. It
+
+    cannot be on where the general Runtime Monitoring feature
+
+    (GuardDuty.11) is off, so its output is a subset of that one''s. Nests
+
+    the same way as GuardDuty.7 (see that policy''s description for the
+
+    JMESPath pipe reasoning), but under `RUNTIME_MONITORING` /
+
+    `ECS_FARGATE_AGENT_MANAGEMENT` instead of `EKS_RUNTIME_MONITORING` /
+
+    `EKS_ADDON_MANAGEMENT`. A METRIC of rollout state.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='RUNTIME_MONITORING']|[0].AdditionalConfiguration[?Name=='ECS_FARGATE_AGENT_MANAGEMENT'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: guardduty-ec2-runtime-monitoring-disabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP GuardDuty.13
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'GuardDuty detectors with EC2 Runtime Monitoring disabled. Like
+
+    GuardDuty.12, it cannot be on where the general Runtime Monitoring
+
+    feature (GuardDuty.11) is off. Same nesting shape as GuardDuty.7/.12,
+
+    under `RUNTIME_MONITORING` / `EC2_AGENT_MANAGEMENT`. A METRIC of rollout
+
+    state.
+
+    '
+  filters:
+  - type: guard-duty
+    Detector.Features[?Name=='RUNTIME_MONITORING']|[0].AdditionalConfiguration[?Name=='EC2_AGENT_MANAGEMENT'].Status:
+      op: not-in
+      value_type: swap
+      value: ENABLED
+- name: macie-not-enabled
+  resource: aws.account
+  metadata:
+    severity: info
+    category: detection
+    frameworks:
+    - FSBP Macie.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Accounts/regions where Amazon Macie is not enabled. Without Macie,
+
+    sensitive-data discovery in S3 (PII, secrets, credentials sitting in a
+
+    bucket) is not running in that cell at all. Macie is off by default, so
+
+    wherever it has not been turned on this control describes the estate
+
+    rather than an anomaly inside it: a METRIC, not a per-resource ticket
+
+    queue.
+
+
+    Uses the native `check-macie` account filter (`macie2:GetMacieSession`),
+
+    the same shape as `check-cloudtrail`/`guard-duty` elsewhere in this
+
+    catalogue: it populates `c7n:macie` and this policy matches on `status`
+
+    not being ENABLED.
+
+
+    `op: ne` against `status` and NOT `value: absent`, and this is the one
+
+    place in this file where a bare `ne` (no extra absence guard) is
+
+    correct: a session that never existed at all annotates to `{}`
+
+    (AccessDeniedException, normalized by the filter itself) so `status`
+
+    is absent and `None != ''ENABLED''` is True. But a session that exists
+
+    and is merely PAUSED is NOT absent, so `value: absent` alone misses it
+
+    -- a false negative confirmed by dry-running both spellings against a
+
+    cell in that state. `PAUSED` means Macie is not actively scanning
+
+    either way, so both shapes have to fail this control.
+
+
+    Macie.2 (automated sensitive data discovery) is NOT here: it needs
+
+    `macie2:GetAutomatedDiscoveryConfiguration`, which has no c7n filter or
+
+    embedded field on any resource, so expressing it would require a custom
+
+    filter.
+
+    '
+  filters:
+  - type: check-macie
+    key: status
+    op: ne
+    value: ENABLED
+- name: inventory-ebs-default-encryption-disabled
+  resource: aws.account
+  metadata:
+    frequency: daily
+  description: 'Flags accounts/regions where EBS encryption-by-default is OFF.
+
+    '
+  filters:
+  - type: default-ebs-encryption
+    state: false
+- name: inventory-ebs-default-encryption-enabled
+  resource: aws.account
+  metadata:
+    frequency: daily
+  description: 'Reports accounts/regions where EBS encryption-by-default is ON.
+
+    Note: the default-ebs-encryption filter reports the state flag only and
+
+    never returns the KMS key configured as the default, so the key id has
+
+    to be collected separately if it needs to be reviewed.
+
+    '
+  filters:
+  - type: default-ebs-encryption
+    state: true
+- name: emr-account-block-public-access-disabled
+  resource: aws.account
+  metadata:
+    severity: critical
+    category: exposure
+    frameworks:
+    - FSBP EMR.2
+    - PCI 1.4.4
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Accounts/regions where EMR''s block-public-access setting is off, or
+
+    permits an inbound port other than 22 through it. The setting exists and
+
+    defaults to on whether or not a cluster is ever launched, so the control
+
+    is evaluable in every account and region -- which matters given the
+
+    consequence of it being off: an EMR cluster launched afterwards could
+
+    expose broker ports to the internet with no policy stopping it.
+
+
+    Port 22 is the one exception the control allows, which is why the second
+
+    branch counts only the permitted ranges that are something other than
+
+    22-to-22.
+
+    '
+  filters:
+  - or:
+    - type: emr-block-public-access
+      key: BlockPublicAccessConfiguration.BlockPublicSecurityGroupRules
+      value: false
+    - type: emr-block-public-access
+      key: length(BlockPublicAccessConfiguration.PermittedPublicSecurityGroupRuleRanges[?MinRange != `22`
+        || MaxRange != `22`])
+      op: gt
+      value: 0

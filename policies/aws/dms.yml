@@ -1,0 +1,289 @@
+policies:
+- name: dms-replication-instance-publicly-accessible
+  resource: aws.dms-instance
+  metadata:
+    severity: medium
+    category: exposure
+    frameworks:
+    - PCI 1.4.4
+    - 'SOX ITGC: Access'
+    - FSBP DMS.1
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'DMS replication instances with PubliclyAccessible=True.
+
+
+    Rated Medium rather than FSBP''s default Critical: PubliclyAccessible
+
+    only means the instance was given a public address, not that the
+
+    address is reachable -- security groups and the absence of an
+
+    internet-gateway route can still block it end to end. It stays a valid
+
+    compliance flag because the setting cannot be changed without
+
+    recreating the instance. Whoever triages a match should confirm the
+
+    security groups and route tables before escalating, and re-check them
+
+    later, since either can change independently of this flag.
+
+    '
+  filters:
+  - type: value
+    key: PubliclyAccessible
+    value: true
+- name: dms-replication-instance-auto-minor-version-upgrade-disabled
+  resource: aws.dms-instance
+  metadata:
+    severity: medium
+    category: vulnerability
+    frameworks:
+    - PCI 6.3.3
+    - FSBP DMS.6
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'DMS replication instances without automatic minor-version upgrades.
+
+
+    This would naturally be a `daily` control (patch lag, not exposure), but
+
+    cadence is resolved per resource type: aws.dms-instance is already
+
+    pulled to 4h by dms-replication-instance-publicly-accessible, so
+
+    declaring `daily` here would have no effect.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: AutoMinorVersionUpgrade
+      value: false
+    - type: value
+      key: AutoMinorVersionUpgrade
+      value: absent
+- name: dms-replication-instance-single-az
+  resource: aws.dms-instance
+  metadata:
+    severity: medium
+    category: resilience
+    frameworks:
+    - FSBP DMS.13
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'DMS replication instances not configured for Multi-AZ. Would naturally
+
+    be `daily` (resilience posture); effectively runs at 4h because the
+
+    public-access policy on the same resource type sets the cadence.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: MultiAZ
+      value: false
+    - type: value
+      key: MultiAZ
+      value: absent
+- name: dms-endpoint-ssl-disabled
+  resource: aws.dms-endpoint
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP DMS.9
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'DMS endpoints with SslMode=none.
+
+
+    S3 endpoints are excluded: an S3 target talks HTTPS to the S3 API
+
+    directly and does not use a DB-style SSL/TLS connection mode, so
+
+    SslMode is structurally ''none'' for that engine regardless of the actual
+
+    transport security. Flagging it would be a false positive on a field
+
+    that does not apply to the engine.
+
+    '
+  filters:
+  - type: value
+    key: EngineName
+    op: ne
+    value: s3
+  - or:
+    - type: value
+      key: SslMode
+      value: none
+    - type: value
+      key: SslMode
+      value: absent
+- name: dms-endpoint-neptune-iam-auth-disabled
+  resource: aws.dms-endpoint
+  metadata:
+    severity: medium
+    category: access-control
+    frameworks:
+    - PCI 7.3.1
+    - FSBP DMS.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'DMS endpoints for Neptune without IAM authorization enabled. The
+
+    NeptuneSettings block only exists on Neptune endpoints, so the engine
+
+    is matched first and the setting is checked with both a `false` and an
+
+    `absent` branch.
+
+    '
+  filters:
+  - type: value
+    key: EngineName
+    value: neptune
+  - or:
+    - type: value
+      key: NeptuneSettings.IamAuthEnabled
+      value: false
+    - type: value
+      key: NeptuneSettings.IamAuthEnabled
+      value: absent
+- name: dms-endpoint-mongodb-auth-disabled
+  resource: aws.dms-endpoint
+  metadata:
+    severity: medium
+    category: access-control
+    frameworks:
+    - PCI 7.3.1
+    - FSBP DMS.11
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'DMS endpoints for MongoDB with no authentication mechanism configured.
+
+    Note the quoted ''NO'' value: unquoted, YAML would parse it as the boolean
+
+    false and the filter would never match the string the API returns.
+
+    '
+  filters:
+  - type: value
+    key: EngineName
+    value: mongodb
+  - or:
+    - type: value
+      key: MongoDbSettings.AuthType
+      value: 'NO'
+    - type: value
+      key: MongoDbSettings.AuthType
+      value: absent
+- name: dms-endpoint-redis-tls-disabled
+  resource: aws.dms-endpoint
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP DMS.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'DMS endpoints for Redis OSS with no TLS connection configured. The
+
+    RedisSettings block is absent on endpoints that were never given one,
+
+    so the `absent` branch is required next to the `op: ne`.
+
+    '
+  filters:
+  - type: value
+    key: EngineName
+    value: redis
+  - or:
+    - type: value
+      key: RedisSettings.SslSecurityProtocol
+      op: ne
+      value: ssl-encryption
+    - type: value
+      key: RedisSettings.SslSecurityProtocol
+      value: absent
+- name: dms-replication-task-target-logging-disabled
+  resource: aws.dms-replication-task
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - PCI 10.4.2
+    - FSBP DMS.7
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'DMS replication tasks where the TARGET_APPLY/TARGET_LOAD log components
+
+    are not configured at all (i.e. logging for the target side is off).
+
+
+    `ReplicationTaskSettings` comes back from `describe_replication_tasks`
+
+    as a JSON-encoded STRING, not a nested object. A plain
+
+    `key: ReplicationTaskSettings.Logging...` would silently resolve to
+
+    None for every task and report 100% as unlogged -- exactly the
+
+    "absence read as a positive" trap. It is parsed here with c7n''s
+
+    `from_json()` custom jmespath function
+
+    (c7n/utils.py:C7NJmespathFunctions._func_from_json), which decodes the
+
+    string before the key path is applied.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.EnableLogging
+      value: false
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.EnableLogging
+      value: absent
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.LogComponents[?Id=='TARGET_APPLY'] | [0]
+      value: absent
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.LogComponents[?Id=='TARGET_LOAD'] | [0]
+      value: absent
+- name: dms-replication-task-source-logging-disabled
+  resource: aws.dms-replication-task
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - PCI 10.4.2
+    - FSBP DMS.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'DMS replication tasks where the SOURCE_CAPTURE/SOURCE_UNLOAD log
+
+    components are not configured (logging for the source side is off).
+
+    Same `from_json()` parsing rationale as the target-side control above.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.EnableLogging
+      value: false
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.EnableLogging
+      value: absent
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.LogComponents[?Id=='SOURCE_CAPTURE'] | [0]
+      value: absent
+    - type: value
+      key: from_json(ReplicationTaskSettings).Logging.LogComponents[?Id=='SOURCE_UNLOAD'] | [0]
+      value: absent

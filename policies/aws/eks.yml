@@ -1,0 +1,155 @@
+policies:
+- name: eks-cluster-unsupported-kubernetes-version
+  resource: aws.eks
+  metadata:
+    severity: high
+    category: vulnerability
+    frameworks:
+    - PCI 12.3.4
+    - FSBP EKS.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'EKS clusters running a Kubernetes version below the oldest FSBP considers
+
+    standard-support (1.33 at the time of writing). An unsupported
+
+    control-plane version stops receiving security patches from AWS.
+
+    [FSBP EKS.2, oldestVersionSupported=1.33]
+
+    '
+  filters:
+  - type: value
+    key: version
+    value_type: version
+    op: lt
+    value: '1.33'
+- name: eks-cluster-secrets-not-encrypted
+  resource: aws.eks
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 8.3.2
+    - FSBP EKS.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'EKS clusters with no KMS envelope encryption configured for Kubernetes
+
+    secrets stored in etcd -- no encryptionConfig entry covering `secrets` at
+
+    all.
+
+
+    Note for whoever re-reads this after 2026-08-10: AWS is RETIRING this FSBP
+
+    control after that date, because EKS 1.28+ protects secrets with envelope
+
+    encryption by default. Still worth fixing meanwhile on older clusters, but
+
+    don''t be surprised if the control disappears the next time the framework
+
+    control list is refreshed.
+
+    [FSBP EKS.3]
+
+    '
+  filters:
+  - not:
+    - type: value
+      key: encryptionConfig[].resources[]
+      op: contains
+      value: secrets
+- name: eks-cluster-audit-logging-disabled
+  resource: aws.eks
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - PCI 10.2.1
+    - FSBP EKS.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'EKS clusters with control-plane audit logging disabled (no record of who did
+
+    what against the Kubernetes API).
+
+    [FSBP EKS.8, logTypes=audit]
+
+    '
+  filters:
+  - not:
+    - type: value
+      key: logging.clusterLogging[?contains(types, 'audit') && enabled].types[][]
+      value: not-null
+- name: eks-nodegroup-unsupported-kubernetes-version
+  resource: aws.eks-nodegroup
+  metadata:
+    severity: high
+    category: vulnerability
+    frameworks:
+    - FSBP EKS.9
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'EKS managed node groups running a Kubernetes version below the oldest FSBP
+
+    standard-support version (1.33). Same underlying gap as
+
+    eks-cluster-unsupported-kubernetes-version, different resource type: FSBP
+
+    tracks them as separate controls because a cluster can be upgraded before
+
+    its node groups, or vice versa, so neither policy subsumes the other.
+
+    [FSBP EKS.9, oldestVersionSupported=1.33]
+
+    '
+  filters:
+  - type: value
+    key: version
+    value_type: version
+    op: lt
+    value: '1.33'
+- name: eks-public-endpoint-open
+  resource: aws.eks
+  metadata:
+    severity: critical
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    - 'SOX ITGC: Access'
+    - FSBP EKS.1
+    frequency: 4h
+  description: 'EKS clusters with the API server published to the internet WITHOUT a CIDR
+
+    restriction. The AND with publicAccessCidrs avoids reporting public clusters
+
+    that are in fact restricted to known ranges (office, VPN).
+
+    '
+  filters:
+  - type: value
+    key: resourcesVpcConfig.endpointPublicAccess
+    value: true
+  - type: value
+    key: resourcesVpcConfig.publicAccessCidrs
+    op: contains
+    value: 0.0.0.0/0
+- name: inventory-eks-addon
+  resource: aws.eks
+  metadata:
+    frequency: daily
+  description: 'EKS clusters that have the vpc-cni managed addon installed, with
+
+    that addon''s own configuration (version, health) attached to each
+
+    match. Despite the name, it does not enumerate every addon on a
+
+    cluster -- the `attrs` filter is scoped to addonName vpc-cni.
+
+    '
+  filters:
+  - type: addon
+    attrs:
+    - addonName: vpc-cni

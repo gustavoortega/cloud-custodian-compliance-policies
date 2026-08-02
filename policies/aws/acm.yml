@@ -1,0 +1,132 @@
+policies:
+- name: acm-certificate-not-renewed
+  resource: aws.acm-certificate
+  metadata:
+    severity: high
+    category: availability
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 4.2.1
+    - FSBP ACM.1
+  description: 'ACM certificates not renewed within 30 days of their expiration date --
+
+    which includes certificates already past NotAfter, since the `expiration`
+
+    value_type comparison is signed and an expired certificate is simply
+
+    further below the threshold.
+
+
+    A narrower policy for the in-use subset exists as
+
+    acm-certificate-expired-in-use (exposure-and-encryption.yaml, severity
+
+    critical, PCI 4.2.1). This one is broader -- FSBP ACM.1 does not condition
+
+    on whether the certificate is attached to anything -- and carries the FSBP
+
+    framework tag that policy does not.
+
+    '
+  filters:
+  - type: value
+    key: NotAfter
+    value_type: expiration
+    op: less-than
+    value: 30
+- name: acm-certificate-rsa-key-too-short
+  resource: aws.acm-certificate
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 4.2.1
+    - FSBP ACM.2
+  description: 'RSA certificates managed by ACM with a key shorter than 2048 bits. ACM
+
+    itself cannot issue anything weaker than RSA-2048, so the path this
+
+    control covers is an imported certificate: `aws.acm-certificate`
+
+    enumerates imported certificates alongside issued ones, and only the
+
+    imported ones can carry a key below the floor.
+
+    '
+  filters:
+  - type: value
+    key: KeyAlgorithm
+    value: RSA-1024
+- name: acm-certificate-expired-in-use
+  resource: aws.acm-certificate
+  metadata:
+    severity: critical
+    category: availability
+    framework: PCI 4.2.1
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'EXPIRED ACM certificates still attached to a resource in use (InUseBy not
+
+    empty). Every client reaching that endpoint over HTTPS gets a certificate error.
+
+
+    Equivalent to the `acm_certificates_expiration_check` that Prowler ships out of
+
+    the box. Certificates on email-validated renewal are the ones that reach this
+
+    state: renewal fails silently, the certificate expires, and it stays attached
+
+    to a live load balancer until somebody notices the browser warning.
+
+    '
+  filters:
+  - type: value
+    key: Status
+    value: EXPIRED
+  - type: value
+    key: InUseBy
+    value: not-null
+- name: acm-certificate-expiring-30d
+  resource: aws.acm-certificate
+  metadata:
+    severity: high
+    category: availability
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ACM certificates expiring within the next 30 days. It is the preventive control
+
+    for the one above: it leaves room to renew before the outage.
+
+    '
+  filters:
+  - type: value
+    key: Status
+    value: ISSUED
+  - type: value
+    key: NotAfter
+    value_type: expiration
+    op: lt
+    value: 30
+- name: acm-certificate-renewal-failed
+  resource: aws.acm-certificate
+  metadata:
+    severity: high
+    category: availability
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Certificates whose automatic renewal failed. It is the root cause of the
+
+    previous control and warns months earlier: email validation requires someone to
+
+    click a link, and if nobody does the certificate expires silently. DNS
+
+    validation does not have that problem.
+
+    '
+  filters:
+  - type: value
+    key: RenewalSummary.RenewalStatus
+    value: FAILED

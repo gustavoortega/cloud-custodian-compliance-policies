@@ -1,0 +1,117 @@
+policies:
+- name: aws-backup-dynamodb-table
+  resource: aws.dynamodb-table
+  metadata:
+    frequency: daily
+  description: 'DynamoDB tables that do NOT have 5 consecutive days of COMPLETED AWS Backup
+
+    recovery points.
+
+
+    A match is not proof the resource is unprotected. A resource created
+
+    less than 5 days ago cannot have accumulated 5 days of history and
+
+    matches regardless of its real backup posture, so check CreationDateTime
+
+    and the AWS Backup plan before escalating.
+
+
+    The `not:` is the whole point. `ConsecutiveAwsBackupsFilter.process`
+
+    keeps the resources whose backup history SATISFIES the requirement
+
+    (c7n/filters/backup.py), so without the negation this policy reports the
+
+    healthy resources and hides the gaps -- a failure mode that reads as a
+
+    clean result and can therefore go unnoticed indefinitely.
+
+    '
+  filters:
+  - not:
+    - type: consecutive-aws-backups
+      count: 5
+      period: days
+      status: COMPLETED
+- name: dynamodb-point-in-time-recovery-disabled
+  resource: aws.dynamodb-table
+  metadata:
+    severity: info
+    category: resilience
+    frequency: daily
+    frameworks:
+    - FSBP DynamoDB.2
+    owner_tag: resource-owner
+  description: 'DynamoDB tables without point-in-time recovery (PITR) enabled (FSBP
+
+    DynamoDB.2).
+
+
+    METRIC rather than a per-table ticket queue: PITR is opt-in and costs
+
+    nothing until a restore is actually performed, so non-adoption is the
+
+    default state and this tracks as adoption debt by owner.
+
+
+    PITR status is per table and comes from `DescribeContinuousBackups`,
+
+    which c7n attaches to the resource as `_ContinuousBackups`. The explicit
+
+    `absent` branch keeps "the augmentation returned nothing for this table"
+
+    from being confused with a real answer: in c7n an absent key evaluates
+
+    to None, and letting a comparison against None decide a compliance
+
+    verdict is exactly the trap this file avoids everywhere else.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: _ContinuousBackups.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus
+      op: ne
+      value: ENABLED
+    - type: value
+      key: _ContinuousBackups
+      value: absent
+- name: dynamodb-deletion-protection-disabled
+  resource: aws.dynamodb-table
+  metadata:
+    severity: info
+    category: data-protection
+    frequency: daily
+    frameworks:
+    - FSBP DynamoDB.6
+    owner_tag: resource-owner
+  description: 'DynamoDB tables with `DeletionProtectionEnabled` false (FSBP
+
+    DynamoDB.6).
+
+
+    METRIC rather than a per-table ticket queue: the flag defaults to false
+
+    at table creation, so non-adoption is the default state.
+
+
+    Checked with a plain positive `value: false`, unlike most flag checks in
+
+    this file, because DynamoDB populates this field with its default on
+
+    every table -- there is no legitimate absent case to fold in, so a match
+
+    here really is "someone left it off" and not "we could not read it".
+
+    Where a flag CAN legitimately be missing, this file adds an explicit
+
+    absent branch instead; see `dynamodb-point-in-time-recovery-disabled`
+
+    above.
+
+    '
+  filters:
+  - type: value
+    key: DeletionProtectionEnabled
+    value: false

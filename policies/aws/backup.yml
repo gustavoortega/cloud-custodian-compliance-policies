@@ -1,0 +1,38 @@
+policies:
+- name: backup-recovery-point-unencrypted
+  resource: aws.backup-recovery-point
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - FSBP Backup.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'AWS Backup recovery points with IsEncrypted: false. An unencrypted
+
+    recovery point means the backup itself carries none of the at-rest
+
+    protection the source resource may have -- restoring it recreates an
+
+    unencrypted copy regardless of what the original resource''s own
+
+    encryption settings are today. Recovery points that predate an
+
+    EBS-default-encryption rollout are the typical shape of a match: the
+
+    source volume is encrypted now, the old backup of it is not.
+
+
+    A recovery point where IsEncrypted is absent from the response is NOT
+
+    treated as encrypted and does not match here -- see the filter''s
+
+    docstring. It is annotated c7n:BackupEncryptionUnknown instead, so it
+
+    stays visible on inspection without being reported as either a clean
+
+    result or a finding.
+
+    '
+  filters:
+  - type: unencrypted

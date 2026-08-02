@@ -1,0 +1,280 @@
+policies:
+- name: opensearch-encryption-at-rest-disabled
+  resource: aws.elasticsearch
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - PCI 3.5.1
+    - FSBP Opensearch.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch domains with no encryption at rest. They usually index logs and
+
+    business data in the clear.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: EncryptionAtRestOptions.Enabled
+      value: false
+    - type: value
+      key: EncryptionAtRestOptions.Enabled
+      value: absent
+- name: opensearch-node-to-node-encryption-disabled
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP Opensearch.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch domains with no node-to-node encryption: cluster traffic travels in
+
+    the clear inside the VPC.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: NodeToNodeEncryptionOptions.Enabled
+      value: false
+    - type: value
+      key: NodeToNodeEncryptionOptions.Enabled
+      value: absent
+- name: opensearch-error-logging-disabled
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP ES.4
+    - FSBP Opensearch.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch/Elasticsearch domains not sending error logs to CloudWatch.
+
+
+    `LogPublishingOptions` is absent entirely on a domain that never
+
+    configured any log publishing, so the `or: absent` branch is the
+
+    common case here, not an edge case: without it a domain that never
+
+    touched logging would evaluate None == False -> False and pass as
+
+    compliant.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: LogPublishingOptions.ES_APPLICATION_LOGS.Enabled
+      value: false
+    - type: value
+      key: LogPublishingOptions.ES_APPLICATION_LOGS.Enabled
+      value: absent
+- name: opensearch-audit-logging-disabled
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP ES.5
+    - FSBP Opensearch.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch/Elasticsearch domains with no audit logging: authentication
+
+    successes/failures, index changes and search queries go untracked.
+
+
+    Same `absent` branch rationale as the error-logging control: the
+
+    AUDIT_LOGS key does not exist on a domain that never configured log
+
+    publishing.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: LogPublishingOptions.AUDIT_LOGS.Enabled
+      value: false
+    - type: value
+      key: LogPublishingOptions.AUDIT_LOGS.Enabled
+      value: absent
+- name: opensearch-insufficient-data-nodes
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: resilience
+    frameworks:
+    - FSBP ES.6
+    - FSBP Opensearch.6
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch/Elasticsearch domains with fewer than 3 data nodes, or with
+
+    zone awareness disabled -- either one leaves the domain unable to
+
+    survive an AZ failure without downtime. Zone awareness needs both a
+
+    `false` and an `absent` branch: the key is only written once the
+
+    setting has been configured at least one time.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: ElasticsearchClusterConfig.InstanceCount
+      op: lt
+      value: 3
+    - type: value
+      key: ElasticsearchClusterConfig.ZoneAwarenessEnabled
+      value: false
+    - type: value
+      key: ElasticsearchClusterConfig.ZoneAwarenessEnabled
+      value: absent
+- name: opensearch-insufficient-dedicated-master-nodes
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: resilience
+    frameworks:
+    - FSBP ES.7
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch/Elasticsearch domains without at least 3 dedicated master
+
+    nodes. Three branches are needed because there are two distinct ways to
+
+    fail the control: dedicated masters never enabled at all
+
+    (DedicatedMasterEnabled false, or the key absent because it was never
+
+    configured) and dedicated masters enabled but with too low a count.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: ElasticsearchClusterConfig.DedicatedMasterEnabled
+      value: false
+    - type: value
+      key: ElasticsearchClusterConfig.DedicatedMasterEnabled
+      value: absent
+    - type: value
+      key: ElasticsearchClusterConfig.DedicatedMasterCount
+      op: lt
+      value: 3
+- name: opensearch-outdated-tls-policy
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP ES.8
+    - FSBP Opensearch.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch/Elasticsearch domains not on the latest TLS security policy
+
+    (Policy-Min-TLS-1-2-PFS-2023-10), or with HTTPS not enforced. Domains
+
+    created before that policy existed keep whatever
+
+    Policy-Min-TLS-* they were created with; the setting is not upgraded
+
+    automatically, so this is normally an infrastructure-wide bump rather
+
+    than a per-domain defect.
+
+
+    Both `DomainEndpointOptions` fields were observed present on every
+
+    domain, so a bare `op: ne` is used with no `absent` guard --
+
+    re-check that before reusing this pattern on another field.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: DomainEndpointOptions.TLSSecurityPolicy
+      op: ne
+      value: Policy-Min-TLS-1-2-PFS-2023-10
+    - type: value
+      key: DomainEndpointOptions.EnforceHTTPS
+      value: false
+- name: opensearch-fine-grained-access-control-disabled
+  resource: aws.elasticsearch
+  metadata:
+    severity: high
+    category: access-control
+    frameworks:
+    - FSBP Opensearch.7
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch domains without fine-grained access control (FGAC) enabled --
+
+    no internal user/role-based authorization layer on top of whatever the
+
+    domain''s resource policy allows. `AdvancedSecurityOptions.Enabled` is
+
+    absent on a domain that never enabled FGAC, hence the `absent` branch.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: AdvancedSecurityOptions.Enabled
+      value: false
+    - type: value
+      key: AdvancedSecurityOptions.Enabled
+      value: absent
+- name: opensearch-software-update-available
+  resource: aws.elasticsearch
+  metadata:
+    severity: medium
+    category: vulnerability
+    frameworks:
+    - PCI 6.3.3
+    - FSBP Opensearch.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'OpenSearch domains with a pending service-software update not yet
+
+    installed. AWS auto-applies these after roughly 2 weeks if untouched,
+
+    so this measures patch lag rather than an urgent exposure -- daily
+
+    cadence, not 4h.
+
+    '
+  filters:
+  - type: value
+    key: ServiceSoftwareOptions.UpdateAvailable
+    value: true
+- name: detect-public-opensearch
+  resource: aws.elasticsearch
+  metadata:
+    frequency: 4h
+  description: 'OpenSearch/Elasticsearch domains with no VPCOptions configured -- the
+
+    domain was deployed with a public endpoint instead of inside a VPC,
+
+    so it is reachable directly from the internet unless the domain''s
+
+    access policy restricts it.
+
+    '
+  filters:
+  - type: value
+    key: VPCOptions
+    value: absent

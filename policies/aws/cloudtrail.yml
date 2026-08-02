@@ -1,0 +1,79 @@
+policies:
+- name: cloudtrail-not-encrypted-with-kms
+  resource: aws.cloudtrail
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP CloudTrail.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CloudTrail trails with no KMS key configured (SSE-S3 default instead
+
+    of SSE-KMS). Trails are few per organisation once shadow copies are
+
+    excluded, so this is small enough to triage directly. `KmsKeyId` is
+
+    genuinely absent (not empty) when SSE-KMS is not configured, so this is
+
+    an absence check, not a `false`/`ne` comparison.
+
+    '
+  filters:
+  - type: is-shadow
+    state: false
+  - type: value
+    key: KmsKeyId
+    value: absent
+- name: cloudtrail-log-file-validation-disabled
+  resource: aws.cloudtrail
+  metadata:
+    severity: low
+    category: logging
+    frameworks:
+    - FSBP CloudTrail.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CloudTrail trails with log file integrity validation OFF. Without it, a
+
+    tampered or deleted log file leaves no digitally-signed digest to detect
+
+    the tampering. `LogFileValidationEnabled` is a real boolean that the API
+
+    always returns, so this is a direct `value: false` check with no absence
+
+    guard.
+
+    '
+  filters:
+  - type: is-shadow
+    state: false
+  - type: value
+    key: LogFileValidationEnabled
+    value: false
+- name: cloudtrail-not-integrated-with-cloudwatch-logs
+  resource: aws.cloudtrail
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP CloudTrail.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CloudTrail trails not sending events to CloudWatch Logs
+
+    (`CloudWatchLogsLogGroupArn` absent). Without it, there is no way to
+
+    alarm in real time on a specific API call pattern from that trail; the
+
+    only recourse is querying the S3 log files after the fact. Small enough
+
+    to triage directly.
+
+    '
+  filters:
+  - type: is-shadow
+    state: false
+  - type: value
+    key: CloudWatchLogsLogGroupArn
+    value: absent

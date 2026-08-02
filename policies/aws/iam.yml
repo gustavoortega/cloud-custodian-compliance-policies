@@ -1,0 +1,647 @@
+policies:
+- name: iam-server-certificate-expired
+  resource: aws.iam-certificate
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 4.2.1
+    frequency: daily
+  description: 'Expired server certificates stored in IAM. Complements the ACM controls: the IAM
+
+    ones are the old ones, the ones nobody looks at, and they are still usable by
+
+    classic ELBs.
+
+    [prowler iam_no_expired_server_certificates_stored]
+
+    '
+  filters:
+  - type: value
+    key: Expiration
+    op: lt
+    value_type: expiration
+    value: 0
+- name: iam-access-key-older-than-1y
+  resource: aws.iam-user
+  metadata:
+    severity: high
+    category: identity
+    frameworks:
+    - CIS 1.14
+    - PCI 8.6.3
+    - 'SOX ITGC: Access'
+    - FSBP IAM.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Users with ACTIVE access keys created more than 365 days ago.
+
+
+    Complements iam-stale-credentials-gt-90d, which detects UNUSED credentials. A
+
+    key that has been used every day since it was created passes that control
+
+    cleanly and is exactly the one most exposed: the older and the more used, the
+
+    more places have a copy of it.
+
+    '
+  filters:
+  - type: credential
+    key: access_keys.active
+    value: true
+  - type: credential
+    key: access_keys.last_rotated
+    value_type: age
+    op: gt
+    value: 365
+- name: iam-access_keys_rotated_gt_90d_used_lt_90
+  resource: iam-user
+  metadata:
+    frequency: daily
+  description: 'IAM users with an access key that is active, has not been rotated in
+
+    over 90 days, and was still used within the last 90 days. An old key
+
+    still authenticating in production is worse than a stale, unused one:
+
+    it is a live credential whose exposure window keeps growing, and
+
+    rotating it risks breaking whatever depends on it. CIS AWS
+
+    Foundations v1.4.0 (1.14).
+
+    '
+  filters:
+  - and:
+    - type: credential
+      key: access_keys.active
+      value: true
+    - type: credential
+      key: access_keys.last_rotated
+      value: 90
+      op: gt
+      value_type: age
+    - type: credential
+      key: access_keys.last_used_date
+      value: 90
+      op: lt
+      value_type: age
+    - type: value
+      key: length("c7n:matched-keys")
+      value: 1
+      op: gte
+- name: iam-stale-credentials-gt-90d
+  resource: aws.iam-user
+  metadata:
+    frequency: daily
+  description: 'IAM users with a password enabled and not used in 90+ days, or with
+
+    an active access key not used in 90+ days. An unused-but-still-active
+
+    credential is exactly what an attacker looks for: valid enough to
+
+    work, unwatched enough that nobody notices it moving. CIS AWS
+
+    Foundations v1.4.0 (1.12).
+
+    '
+  filters:
+  - or:
+    - and:
+      - type: credential
+        key: password_enabled
+        value: true
+      - type: credential
+        key: password_last_used
+        value: 90
+        op: gt
+        value_type: age
+    - and:
+      - type: credential
+        key: access_keys.active
+        value: true
+      - type: credential
+        key: access_keys.last_used_date
+        value: 90
+        op: gt
+        value_type: age
+- name: iam-user-needs-mfa
+  resource: aws.iam-user
+  metadata:
+    frequency: daily
+  description: 'IAM users with a console password enabled but no MFA device active.
+
+    A stolen or guessed password is enough to sign in on its own -- MFA
+
+    is the only thing stopping it. CIS AWS Foundations v1.4.0 (1.10).
+
+    '
+  filters:
+  - type: credential
+    key: password_enabled
+    value: true
+  - type: credential
+    key: mfa_active
+    value: false
+- name: iam-policy-customer-managed-all-all
+  resource: iam-policy
+  metadata:
+    frequency: 4h
+  description: 'Customer-managed IAM policies containing a statement that allows
+
+    Action "*" on Resource "*" -- full administrative access with no
+
+    boundary at all. The policy CAN grant unrestricted access; whether it does depends on it
+
+    being attached, and on no permissions boundary, SCP or explicit deny
+
+    narrowing it. This filter checks none of that. CIS AWS Foundations
+
+    v1.4.0 (1.16).
+
+    '
+  filters:
+  - type: has-allow-all
+- name: iam-policy-customer-managed-s3-all
+  resource: iam-policy
+  metadata:
+    frequency: daily
+  description: 'Customer-managed IAM policies whose effective permissions allow
+
+    s3:*, resolved through check-permissions so it also catches
+
+    wildcards and NotAction constructions, not just a literal `s3:*`
+
+    action entry. The policy ALLOWS s3:*, which is not the same as a principal''s effective
+
+    permissions: the check runs with boundaries disabled and does not
+
+    require the policy to be attached.
+
+    '
+  filters:
+  - type: check-permissions
+    match: allowed
+    actions:
+    - s3:*
+    boundaries: false
+- name: iam-role-aws-managed-admin_full_access
+  resource: iam-role
+  metadata:
+    frequency: daily
+  description: 'IAM roles with the AWS-managed AdministratorAccess or
+
+    AmazonS3FullAccess policy attached directly. Either one hands out far
+
+    more than almost any role needs: AdministratorAccess is full control
+
+    of the account, AmazonS3FullAccess is unrestricted access to every
+
+    bucket. CIS AWS Foundations v1.4.0 (1.16).
+
+    '
+  filters:
+  - or:
+    - type: has-specific-managed-policy
+      value: AdministratorAccess
+    - type: has-specific-managed-policy
+      value: AmazonS3FullAccess
+- name: inventory-iam-users-access-keys
+  resource: aws.iam-user
+  metadata:
+    frequency: daily
+  description: 'Inventory of every IAM access key in the account, one row per key
+
+    regardless of whether it is Active or Inactive.
+
+    '
+  filters:
+  - type: access-key
+    key: Status
+    value: present
+- name: inventory-iam-users-access-keys-details
+  resource: iam-user
+  metadata:
+    frequency: daily
+  description: 'Inventory of every IAM user that has at least one access key,
+
+    pulling each key''s detail from the IAM credential report (rotation
+
+    date, last used date/service/region) instead of just its existence.
+
+    '
+  filters:
+  - type: credential
+    key: access_keys
+    value: present
+- name: inventory-iam-users-policies
+  resource: iam-user
+  metadata:
+    frequency: daily
+  description: 'Inventory of every IAM user with at least one policy attached, be it
+
+    a managed policy or an inline one. Users whose only permissions come
+
+    from group membership are excluded.
+
+    '
+  filters:
+  - or:
+    - type: policy
+      key: PolicyName
+      value: present
+    - type: has-inline-policy
+- name: inventory-iam-role-cross-account
+  resource: aws.iam-role
+  metadata:
+    frequency: daily
+  description: 'Every IAM role whose trust policy allows an account other than its
+
+    own to call sts:AssumeRole. This includes trusts to sibling accounts
+
+    inside the organisation, not just external ones, since no whitelist is
+
+    applied here. Raw inventory feeding
+
+    iam-role-assumable-from-outside-the-org, which narrows this down to
+
+    genuinely external trusts.
+
+    '
+  filters:
+  - type: cross-account
+- name: iam-role-assumable-from-outside-the-org
+  resource: aws.iam-role
+  description: 'IAM roles whose trust policy lets a principal outside the organisation call
+
+    sts:AssumeRole, with no condition binding the grant to something we control.
+
+    An external principal holding this can obtain the role''s permissions directly.
+
+    Wiz "IAM role with cross-account trust to an unknown account", Prowler
+
+    iam_role_cross_account_readonlyaccess_policy.
+
+    '
+  metadata:
+    severity: critical
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  filters:
+  - type: external-trust
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist: &id001
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+    third_parties:
+    - '444444444444'
+    - '555555555555'
+- name: iam-role-external-trust-with-escalation
+  resource: aws.iam-role
+  description: 'Roles assumable from outside the organisation that can ALSO escalate:
+
+    assume other roles, pass roles, or rewrite their own permissions.
+
+
+    Trust and permissions are usually audited separately. Neither alone is
+
+    the finding: a vendor role with read-only access is fine, and an
+
+    escalation-capable role trusted only internally is normal. The pair is
+
+    what turns a vendor integration into an account compromise -- an
+
+    external trust protected by an ExternalId guards the front door, but
+
+    past it a role holding sts:AssumeRole on Resource "*" has no ceiling.
+
+
+    `check-permissions` resolves the effective permissions, so it sees the
+
+    action whether it arrives via a managed policy, an inline one or a
+
+    permissions boundary.
+
+    '
+  metadata:
+    severity: critical
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  filters:
+  - type: external-trust
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist: *id001
+  - type: check-permissions
+    match: allowed
+    match-operator: or
+    actions:
+    - sts:AssumeRole
+    - iam:PassRole
+    - iam:PutRolePolicy
+    - iam:AttachRolePolicy
+    - iam:CreateAccessKey
+    - iam:UpdateAssumeRolePolicy
+- name: iam-role-external-trust-without-external-id
+  resource: aws.iam-role
+  description: 'Roles trusting an account outside the organisation whose trust does not
+
+    require sts:ExternalId. Approved providers and unapproved ones alike.
+
+
+    sts:ExternalId is the defence against the confused deputy: without it, a
+
+    vendor can be tricked into using your access on another customer''s behalf.
+
+
+    Approval is irrelevant here, and that took a correction to get right. The
+
+    first version only looked at approved providers, reasoning that the rest
+
+    were already covered by the general rule. Wrong: the two rules answer
+
+    different questions -- "who is entering unapproved" and "which accesses
+
+    lack confused-deputy protection" -- and the second applies to everyone. An
+
+    unapproved provider without ExternalId is worse, not better.
+
+
+    Tying it to the approval list also meant the gap would surface as a NEW
+
+    finding the day the provider got approved, when it had been there all
+
+    along. What a rule means cannot depend on a list.
+
+    '
+  metadata:
+    severity: high
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  filters:
+  - type: external-trust
+    require_external_id: true
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist: *id001
+- name: iam-role-external-trust-unused-1y
+  resource: aws.iam-role
+  description: 'Roles assumable from outside the organisation that have not used a single
+
+    AWS service in the last year.
+
+
+    External access granted and never exercised is surface with no
+
+    counterpart: a proof of concept whose access outlived it, or a monitoring
+
+    integration that was replaced without the trust being removed.
+
+
+    RoleLastUsed cannot be used here: list_roles does not return it, only
+
+    get_role does. The `usage` filter reads Access Advisor instead, which
+
+    covers 365 days. It costs one async job per role, so it goes AFTER
+
+    external-trust: it only runs on the handful that are externally trusted,
+
+    not on every role in the account.
+
+
+    WHY THE `usage` FILTER IS NEGATED
+
+    --------------------------------
+
+    The obvious spelling -- `match-operator: all` with `LastAuthenticated:
+
+    null` -- means "never used ANY service, ever", not "unused for a year".
+
+    A long-idle integration role typically has dozens of tracked services,
+
+    several of them carrying a date from before it went idle, so `all` fails
+
+    on the first dated record and the role stays invisible. Months of idleness
+
+    are not "never".
+
+
+    Restating it as an age comparison does not work either. With
+
+    `match-operator: all` every record must satisfy the operator, and the
+
+    services a role never touched carry no date to compare, so an age test
+
+    fails on them.
+
+
+    What the rule actually means is "no service was used recently", which is
+
+    the negation of "some service was used recently" -- `any` plus an age
+
+    test, wrapped in `not`. That covers both shapes in one expression: a role
+
+    idle for years and a role never used at all both lack a recent record,
+
+    and the roles this spelling adds over the naive one are exactly the ones
+
+    abandoned over a year ago rather than never used.
+
+    '
+  metadata:
+    severity: medium
+    category: hygiene
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: daily
+  filters:
+  - type: external-trust
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist: *id001
+  - not:
+    - type: usage
+      match-operator: any
+      LastAuthenticated:
+        type: value
+        value_type: age
+        op: less-than
+        value: 365
+- name: kms-customer-managed-policy-unscoped-decrypt
+  resource: iam-policy
+  metadata:
+    severity: info
+    category: access-control
+    frequency: daily
+    frameworks:
+    - FSBP KMS.1
+    owner_tag: resource-owner
+  description: 'Customer-managed IAM policies that allow `kms:Decrypt` or
+
+    `kms:ReEncryptFrom` on all KMS keys (Resource "*"), evaluated through
+
+    `check-permissions` (IAM policy simulation) so this also catches
+
+    wildcards such as `kms:*` and not just a literal action string -- the
+
+    same idiom this repo already uses for
+
+    `iam-policy-customer-managed-s3-all` in iam_wide_permissions.yaml.
+
+
+    DELIBERATELY EXCLUDES policies that also match `has-allow-all`, i.e. a
+
+    bare `Action: "*"` on `Resource: "*"`. Those belong to
+
+    `iam-policy-customer-managed-all-all` (CIS 1.16 / FSBP IAM.1 territory);
+
+    without the exclusion, FSBP KMS.1 re-reports every admin policy in the
+
+    account under a second control name and both queues inflate together. An
+
+    admin wildcard is the bigger finding and should be counted once, in the
+
+    bigger queue.
+
+
+    Also requires `AttachmentCount > 0`: an unattached customer-managed
+
+    policy grants nothing to nobody, and including them turns a permissions
+
+    finding into a policy inventory.
+
+    '
+  filters:
+  - type: check-permissions
+    match: allowed
+    actions:
+    - kms:Decrypt
+    - kms:ReEncryptFrom
+    boundaries: false
+  - not:
+    - type: has-allow-all
+  - type: value
+    key: AttachmentCount
+    op: gt
+    value: 0
+- name: kms-role-inline-policy-unscoped-decrypt
+  resource: iam-role
+  metadata:
+    severity: info
+    category: access-control
+    frequency: daily
+    frameworks:
+    - FSBP KMS.2
+    owner_tag: resource-owner
+  description: 'IAM roles with an inline policy, whose EFFECTIVE permissions (inline plus
+
+    any attached managed policy, evaluated via `check-permissions` / IAM
+
+    policy simulation, boundaries ignored) allow `kms:Decrypt` or
+
+    `kms:ReEncryptFrom` on all KMS keys.
+
+
+    APPROXIMATION, stated plainly: AWS''s own KMS.2 looks at INLINE policies
+
+    specifically, while `check-permissions` simulates the principal''s TOTAL
+
+    effective permission set. A role that holds this permission only through
+
+    an attached managed policy, and happens to also carry an unrelated
+
+    inline policy, will match here too. Scoping to principals that
+
+    `has-inline-policy` narrows it to cases where an inline policy is at
+
+    least part of the picture, but it does not prove the inline policy is
+
+    the source -- a faithful per-statement check would need a custom filter
+
+    reading each inline document directly.
+
+
+    `kms-user-inline-policy-unscoped-decrypt` and
+
+    `kms-group-inline-policy-unscoped-decrypt` below apply identical logic
+
+    to the other two principal types KMS.2 covers.
+
+    '
+  filters:
+  - type: has-inline-policy
+    value: true
+  - type: check-permissions
+    match: allowed
+    actions:
+    - kms:Decrypt
+    - kms:ReEncryptFrom
+    boundaries: false
+- name: kms-user-inline-policy-unscoped-decrypt
+  resource: iam-user
+  metadata:
+    severity: info
+    category: access-control
+    frequency: daily
+    frameworks:
+    - FSBP KMS.2
+    owner_tag: resource-owner
+  description: 'Same check as `kms-role-inline-policy-unscoped-decrypt`, for IAM users.
+
+    See that policy''s description for the approximation caveat: this matches
+
+    on EFFECTIVE permissions, not on a proven inline grant.
+
+    '
+  filters:
+  - type: has-inline-policy
+    value: true
+  - type: check-permissions
+    match: allowed
+    actions:
+    - kms:Decrypt
+    - kms:ReEncryptFrom
+    boundaries: false
+- name: kms-group-inline-policy-unscoped-decrypt
+  resource: iam-group
+  metadata:
+    severity: info
+    category: access-control
+    frequency: daily
+    frameworks:
+    - FSBP KMS.2
+    owner_tag: resource-owner
+  description: 'Same check as `kms-role-inline-policy-unscoped-decrypt`, for IAM groups.
+
+    See that policy''s description for the approximation caveat: this matches
+
+    on EFFECTIVE permissions, not on a proven inline grant.
+
+    '
+  filters:
+  - type: has-inline-policy
+    value: true
+  - type: check-permissions
+    match: allowed
+    actions:
+    - kms:Decrypt
+    - kms:ReEncryptFrom
+    boundaries: false

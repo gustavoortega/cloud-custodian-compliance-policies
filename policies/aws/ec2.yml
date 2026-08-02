@@ -1,0 +1,1544 @@
+policies:
+- name: ec2-ami-deregistered
+  resource: aws.ec2
+  metadata:
+    severity: medium
+    category: supply-chain
+    owner_tag: resource-owner
+    frameworks:
+    - 'SOX ITGC: Change'
+    frequency: daily
+  description: 'EC2 instances running from an AMI that has already been deregistered. This is a
+
+    blind spot of ec2-disallow-unapproved-ami-owners: that control uses the `image`
+
+    filter, whose lookup returns False when the AMI cannot be resolved
+
+    (InstanceImage.__call__ does `if not image: return False`), so precisely the
+
+    most suspicious case -- an instance running from an image that is untraceable
+
+    today -- never matches and disappears from the result.
+
+
+    This policy uses `image-metadata`, which per its own documentation resolves the
+
+    state "even for deregistered or deprecated AMIs".
+
+
+    It is ADDITIVE: it does not touch the existing policy, it only covers what that
+
+    one misses.
+
+    '
+  filters:
+  - type: image-metadata
+    key: State
+    value: deregistered
+- name: ec2-disallow-unapproved-ami-owners
+  resource: aws.ec2
+  metadata:
+    frequency: daily
+  description: 'Detects EC2 instances launched from AMIs that are not owned by Amazon
+
+    and do not belong to an approved AWS account within the organization.
+
+    This control helps prevent the use of untrusted or externally sourced
+
+    machine images that may introduce security or compliance risks.
+
+    '
+  filters:
+  - and:
+    - type: image
+      key: ImageOwnerAlias
+      op: ne
+      value: amazon
+    - type: image
+      key: OwnerId
+      op: not-in
+      value:
+      - '111111111111'
+      - '222222222222'
+      - '333333333333'
+- name: ec2-ami-public
+  resource: aws.ami
+  metadata:
+    severity: critical
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  description: 'AMIs shared with the entire world. A public AMI exposes the whole disk:
+
+    binaries, configuration, and frequently credentials embedded in the
+
+    filesystem. It is one of the quietest ways to leak code and secrets, and
+
+    the copies made from it while it was public cannot be recalled.
+
+    [prowler ec2_ami_public]
+
+    '
+  filters:
+  - type: value
+    key: Public
+    value: true
+- name: ec2-ebs-snapshot-public
+  resource: aws.ebs-snapshot
+  metadata:
+    severity: critical
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    - FSBP EC2.1
+    frequency: 4h
+  description: 'Public EBS snapshots. Anyone can create a volume from the snapshot and read the
+
+    entire database. It is the classic mass-leak vector and it requires no
+
+    vulnerability at all.
+
+    [prowler ec2_ebs_public_snapshot]
+
+    '
+  filters:
+  - type: cross-account
+    everyone_only: true
+- name: ebs-volume-unencrypted
+  resource: aws.ebs
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - PCI 3.5.1
+    - FSBP EC2.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'EBS volumes with no encryption at rest. It cannot be enabled in place: it
+
+    requires a snapshot, an encrypted copy and replacing the volume, so the earlier
+
+    it is caught the cheaper the migration.
+
+    [prowler ec2_ebs_volume_encryption]
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: Encrypted
+      value: false
+    - type: value
+      key: Encrypted
+      value: absent
+- name: ebs-snapshot-unencrypted-recent
+  resource: aws.ebs-snapshot
+  metadata:
+    severity: high
+    category: encryption
+    framework: PCI 3.5.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Unencrypted EBS snapshots created in the last 90 days. They outlive the original
+
+    volume and tend to sit in the account for years with no owner.
+
+    [prowler ec2_ebs_snapshots_encrypted]
+
+
+    WHY THE 90-DAY WINDOW: without it the policy also returns every
+
+    unencrypted snapshot ever taken, and in an account of any age the
+
+    historical backlog dominates the result by orders of magnitude. That is
+
+    a cleanup project, not an alert, and re-emitting it every scan across
+
+    every account and region would drown the index. The window keeps only
+
+    the snapshots that indicate CURRENT bad practice, which is the
+
+    actionable part; the backlog is attacked once, with a separate report.
+
+    '
+  filters:
+  - type: skip-ami-snapshots
+    value: true
+  - type: age
+    days: 90
+    op: lt
+  - or:
+    - type: value
+      key: Encrypted
+      value: false
+    - type: value
+      key: Encrypted
+      value: absent
+- name: ec2-internet-facing-instance-profile-with-imdsv1
+  resource: aws.ec2
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    - PCI 2.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  description: 'Running instances with a public IP, an instance profile, AND IMDSv1 still
+
+    allowed. That combination is the credential theft path: any SSRF on the
+
+    application turns into a request to 169.254.169.254 and the role''s
+
+    credentials come back. IMDSv2 closes it by requiring a PUT to obtain a
+
+    token, which an SSRF cannot issue.
+
+
+    The IMDSv1 condition is what makes this actionable. A public IP plus an
+
+    instance profile on its own is the normal shape of a bastion or a public
+
+    worker, so without the third condition the policy reports a large set of
+
+    instances with nothing to do about any of them.
+
+
+    The broad attack surface is already inventoried by
+
+    `ec2-instances-with-public-ip`, so nothing is lost.
+
+
+    Renamed from `ec2-internet-facing-with-instance-profile`.
+
+    [prowler ec2_instance_imdsv2_enabled + ec2_instance_public_ip]
+
+    '
+  filters:
+  - type: value
+    key: State.Name
+    value: running
+  - type: value
+    key: PublicIpAddress
+    value: present
+  - type: value
+    key: IamInstanceProfile
+    value: present
+  - type: value
+    key: MetadataOptions.HttpTokens
+    value: optional
+- name: launch-template-imdsv1-allowed
+  resource: aws.launch-template-version
+  metadata:
+    severity: high
+    category: identity
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 2.2.1
+    - FSBP EC2.170
+    frequency: daily
+  description: 'Launch templates that still allow IMDSv1, restricted to the versions something
+
+    can actually launch. This is the root cause the misconfigured instances come
+
+    from: an autoscaling group that scales out creates new instances with IMDSv1
+
+    even when the existing ones have been remediated. Detecting only the instance
+
+    is treating the symptom.
+
+
+    `referenced-version` resolves what each Auto Scaling group, EKS nodegroup, or
+
+    fleet actually launches -- `$Latest`, `$Default`, or a pinned number -- instead
+
+    of assuming everyone uses the template''s default. Both alternatives are wrong
+
+    in opposite directions: with no filter at all the policy walks every historical
+
+    version of every template, and a `DefaultVersion: true` filter silently misses
+
+    the versions an ASG pinned to a specific number, which are exactly the ones
+
+    still launching instances.
+
+    [prowler ec2_launch_template_imdsv2_required]
+
+    '
+  filters:
+  - type: referenced-version
+  - type: value
+    key: LaunchTemplateData.MetadataOptions.HttpTokens
+    value: optional
+- name: launch-template-assigns-public-ip
+  resource: aws.launch-template-version
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    - FSBP EC2.25
+    frequency: 4h
+  description: 'Launch templates that assign a public IP automatically, restricted to the
+
+    versions something can actually launch. Same argument as above: every
+
+    scale-out of the autoscaling group creates exposed instances, and a version
+
+    pinned by an ASG instead of `$Default` is invisible until `referenced-version`
+
+    resolves it -- see launch-template-imdsv1-allowed.
+
+    [prowler ec2_launch_template_no_public_ip]
+
+    '
+  filters:
+  - type: referenced-version
+  - type: value
+    key: LaunchTemplateData.NetworkInterfaces[].AssociatePublicIpAddress
+    op: contains
+    value: true
+- name: security-group-sensitive-port-reachable-from-internet
+  resource: aws.security-group
+  metadata:
+    severity: critical
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    - 'SOX ITGC: Access'
+    - FSBP EC2.19
+    frequency: 4h
+  description: 'Security groups opening a database or admin port to the world AND attached
+
+    to something that actually has a public address.
+
+
+    The second condition is what makes this actionable. The port rule on its
+
+    own matches mostly groups that are attached to nothing, or attached only
+
+    to private resources -- a rule set that is not reachable from anywhere.
+
+
+    `used` is not enough: attached is not the same as reachable. Correlating a
+
+    group with the addresses of its interfaces cannot be expressed
+
+    declaratively, hence the custom filter.
+
+
+    Findings carry `c7n:ExposedVia` with the interfaces and what sits behind
+
+    them, so the alert names the load balancer or instance directly.
+
+    '
+  filters:
+  - or:
+    - type: ingress
+      Cidr:
+        value: 0.0.0.0/0
+      Ports:
+      - 20
+      - 21
+      - 22
+      - 23
+      - 389
+      - 445
+      - 636
+      - 1433
+      - 1434
+      - 1521
+      - 2483
+      - 3306
+      - 3389
+      - 5432
+      - 5601
+      - 6379
+      - 7199
+      - 9092
+      - 9160
+      - 9200
+      - 9300
+      - 11211
+      - 27017
+      - 27018
+    - type: ingress
+      CidrV6:
+        value: ::/0
+      Ports:
+      - 20
+      - 21
+      - 22
+      - 23
+      - 389
+      - 445
+      - 636
+      - 1433
+      - 1434
+      - 1521
+      - 2483
+      - 3306
+      - 3389
+      - 5432
+      - 5601
+      - 6379
+      - 7199
+      - 9092
+      - 9160
+      - 9200
+      - 9300
+      - 11211
+      - 27017
+      - 27018
+  - type: internet-exposed
+    include_ipv6: true
+- name: inventory-security-group-sensitive-port-open
+  resource: aws.security-group
+  metadata:
+    severity: info
+    category: inventory
+    owner_tag: resource-owner
+    frequency: daily
+  description: "Security groups whose rules open a database or admin port to 0.0.0.0/0.\nInventory, not\
+    \ a finding.\n\nA security group is a rule set: it can be attached to nothing at all, so\nmost of\
+    \ what this reports is not reachable from anywhere today.\n\nThe finding is `security-group-sensitive-port-reachable-from-internet`,\n\
+    which runs this same port filter and then requires real exposure. This one\nstays as hygiene inventory:\
+    \ an open group attached to nothing today is an\nincident the day someone attaches something to it.\n\
+    \nThe 24 ports are NOT only databases -- that was the other half of the old\nname's problem. Databases\
+    \ proper are 8 of the 24:\n\n  remote access / admin  FTP 20-21, SSH 22, Telnet 23, SMB 445, RDP 3389\n\
+    \  directory              LDAP 389, LDAPS 636\n  databases              MSSQL 1433-1434, Oracle 1521/2483,\
+    \ MySQL 3306,\n                         Postgres 5432, MongoDB 27017-27018\n  cache / key-value  \
+    \    Redis 6379, Memcached 11211\n  search                 Elasticsearch 9200/9300, Kibana 5601\n\
+    \  streaming              Kafka 9092, Cassandra 7199/9160\n\nProwler spends 20 separate critical checks\
+    \ on this; here it is one policy.\n\nRenamed from `security-group-database-port-open-to-internet`:\
+    \ the old name\nclaimed reachability it never proved, and said \"database\" for a list that\nis mostly\
+    \ not databases.\n"
+  filters:
+  - or:
+    - type: ingress
+      Cidr:
+        value: 0.0.0.0/0
+      Ports:
+      - 20
+      - 21
+      - 22
+      - 23
+      - 389
+      - 445
+      - 636
+      - 1433
+      - 1434
+      - 1521
+      - 2483
+      - 3306
+      - 3389
+      - 5432
+      - 5601
+      - 6379
+      - 7199
+      - 9092
+      - 9160
+      - 9200
+      - 9300
+      - 11211
+      - 27017
+      - 27018
+    - type: ingress
+      CidrV6:
+        value: ::/0
+      Ports:
+      - 20
+      - 21
+      - 22
+      - 23
+      - 389
+      - 445
+      - 636
+      - 1433
+      - 1434
+      - 1521
+      - 2483
+      - 3306
+      - 3389
+      - 5432
+      - 5601
+      - 6379
+      - 7199
+      - 9092
+      - 9160
+      - 9200
+      - 9300
+      - 11211
+      - 27017
+      - 27018
+- name: ec2-stopped-instance-not-removed
+  resource: aws.ec2
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP EC2.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Instances stopped for more than 30 days. A stale instance is a cost and
+
+    hygiene problem, not an active exposure. Published as a fleet-level metric
+
+    rather than a per-resource ticket queue.
+
+
+    Uses the native `state-age` filter, which parses the timestamp embedded in
+
+    `StateTransitionReason` (e.g. "User initiated (2026-04-13 ...)"). Not every
+
+    stopped instance has a reason string that contains a parseable date; for
+
+    those `state-age` returns False -- not a match -- exactly as it would for a
+
+    resource that genuinely has not been stopped long enough. That is the safe
+
+    direction: an unparsed date can undercount but cannot manufacture a false
+
+    positive.
+
+    [FSBP EC2.4, default AllowedDays=30]
+
+    '
+  filters:
+  - type: value
+    key: State.Name
+    value: stopped
+  - type: state-age
+    op: gt
+    days: 30
+- name: ec2-instance-multiple-enis
+  resource: aws.ec2
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP EC2.17
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Instances with more than one network interface. AWS''s own control text
+
+    calls out that EKS worker nodes routinely carry multiple ENIs by design
+
+    (VPC CNI, one per pod-density tier), so wherever EKS is in use a large
+
+    share of the matches is expected shape rather than drift. Published as a
+
+    fleet-level metric rather than a per-resource ticket queue, so that a
+
+    sudden jump (a new dual-homed instance outside of EKS) is visible without
+
+    drowning the findings table.
+
+    [FSBP EC2.17]
+
+    '
+  filters:
+  - type: value
+    key: NetworkInterfaces
+    value_type: size
+    op: gt
+    value: 1
+- name: ec2-paravirtual-instance-type
+  resource: aws.ec2
+  metadata:
+    severity: medium
+    category: hygiene
+    frameworks:
+    - FSBP EC2.24
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Instances running the legacy paravirtual (PV) virtualization type instead
+
+    of HVM. FSBP requires HVM: PV is a deprecated virtualization type, only
+
+    available on older instance families.
+
+
+    Matched on the positive value: `VirtualizationType` is always returned by
+
+    DescribeInstances, so a bare equality check is enough and no `absent`
+
+    branch is needed.
+
+    [FSBP EC2.24]
+
+    '
+  filters:
+  - type: value
+    key: VirtualizationType
+    value: paravirtual
+- name: launch-template-ebs-explicitly-unencrypted
+  resource: aws.launch-template-version
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 3.5.1
+    - FSBP EC2.181
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Launch templates whose EBS block device mappings explicitly set
+
+    `Encrypted: false`. NOT "encryption absent" -- explicit false only.
+
+
+    The distinction is the whole point of this policy. The launch template API
+
+    simply does not echo the `Encrypted` field when it was never set, so
+
+    treating an absent key as "unencrypted" inflates the result by an order of
+
+    magnitude. An absent field means "inherits the account default at launch
+
+    time", which is a different fact: where account-level default EBS
+
+    encryption is on (see inventory-ebs-default-encryption-enabled/disabled in
+
+    ebs-encryption.yaml) and an SCP prevents it from being turned back off, the
+
+    resulting volume is encrypted regardless of what the template says.
+
+    Counting the absent field as a finding measures the gap in the API
+
+    response, not the fleet.
+
+
+    Severity is medium and not high/critical for the same reason: with an SCP
+
+    denying creation of unencrypted EBS resources, even a launch template
+
+    carrying an explicit `Encrypted: false` cannot actually produce an
+
+    unencrypted volume -- the CreateVolume/RunInstances call is denied. That
+
+    makes it real hygiene debt worth fixing at the template rather than an
+
+    active exposure. Raise the severity if your environment has no such
+
+    guardrail.
+
+
+    `referenced-version` resolves the actual version an ASG/EKS nodegroup/fleet
+
+    launches ($Latest, $Default, or pinned) instead of assuming the default --
+
+    see launch-template-imdsv1-allowed in compute-and-images.yaml for the same
+
+    distinction.
+
+    '
+  filters:
+  - type: referenced-version
+  - type: value
+    key: LaunchTemplateData.BlockDeviceMappings[].Ebs.Encrypted
+    op: contains
+    value: false
+- name: security-group-unauthorized-port-open-to-internet
+  resource: aws.security-group
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.18
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Security groups open to 0.0.0.0/0 or ::/0 on a port other than the two
+
+    authorized by default (TCP 80/443), or on any UDP/other-protocol rule (FSBP''s
+
+    default has no authorized UDP list, so any unrestricted UDP rule fails
+
+    regardless of port).
+
+
+    Broader than -- and overlapping with -- the existing
+
+    security-group-sensitive-port-reachable-from-internet /
+
+    inventory-security-group-sensitive-port-open pair in compute-and-images.yaml,
+
+    which already cross-references the 24-port sensitive list against actual
+
+    internet reachability (attached interface with a public IP). That
+
+    cross-reference is what makes a finding actionable; this control''s broader
+
+    "any port outside 80/443" net does not have it. Published as a fleet-level
+
+    metric rather than a per-resource ticket queue.
+
+
+    OnlyPorts is c7n''s inverse-match primitive: it matches a permission that
+
+    allows any port OUTSIDE the given set, and only exempts a rule if it is
+
+    EXACTLY one authorized port (FromPort == ToPort == 80, or == 443) -- a rule
+
+    spanning e.g. 80-443 still matches, correctly, since it opens far more than
+
+    the two authorized ports.
+
+    [FSBP EC2.18, default authorizedTcpPorts=[80,443], no default authorizedUdpPorts]
+
+    '
+  filters:
+  - or:
+    - type: ingress
+      IpProtocol: tcp
+      Cidr:
+        value: 0.0.0.0/0
+      OnlyPorts:
+      - 80
+      - 443
+    - type: ingress
+      IpProtocol: tcp
+      CidrV6:
+        value: ::/0
+      OnlyPorts:
+      - 80
+      - 443
+    - type: ingress
+      IpProtocol:
+        type: value
+        op: ne
+        value: tcp
+      Cidr:
+        value: 0.0.0.0/0
+    - type: ingress
+      IpProtocol:
+        type: value
+        op: ne
+        value: tcp
+      CidrV6:
+        value: ::/0
+- name: subnet-auto-assigns-public-ip-non-default-vpc
+  resource: aws.subnet
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.15
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Subnets with MapPublicIpOnLaunch=true, excluding subnets marked
+
+    `DefaultForAz` -- the ones AWS auto-creates, one per AZ, inside a default
+
+    VPC. Those ship with auto-assign-public-ip ON by design; since a default
+
+    VPC exists in nearly every account, without the exclusion the control
+
+    mostly reports the AWS factory setting on VPCs that carry no real workload.
+
+
+    DefaultForAz is checked at the SUBNET level rather than excluding by VpcId:
+
+    a subnet manually added later inside an otherwise-default VPC has
+
+    DefaultForAz=false and correctly still counts here -- excluding by VpcId
+
+    instead would have hidden that shape along with the real factory defaults.
+
+
+    Published as a fleet-level metric rather than a per-resource ticket queue.
+
+    [FSBP EC2.15]
+
+    '
+  filters:
+  - type: value
+    key: MapPublicIpOnLaunch
+    value: true
+  - type: value
+    key: DefaultForAz
+    value: false
+- name: nacl-unused-non-default
+  resource: aws.network-acl
+  metadata:
+    severity: low
+    category: hygiene
+    frameworks:
+    - PCI 1.2.7
+    - FSBP EC2.16
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Network ACLs with no subnet association, excluding the default NACL that
+
+    every VPC gets (FSBP''s own control explicitly does not fail the default).
+
+
+    The `IsDefault: false` branch is not an optimisation, it is part of the
+
+    control: a default NACL that reports no association is the VPC''s fallback
+
+    rule set, not an orphaned one, and FSBP does not fail it. Without the
+
+    exclusion those rows crowd out the genuine orphans.
+
+    [FSBP EC2.16]
+
+    '
+  filters:
+  - type: value
+    key: Associations
+    value: []
+  - type: value
+    key: IsDefault
+    value: false
+- name: transit-gateway-auto-accepts-shared-attachments
+  resource: aws.transit-gateway
+  metadata:
+    severity: medium
+    category: identity
+    frameworks:
+    - FSBP EC2.23
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Transit Gateways configured to auto-accept shared VPC attachment requests
+
+    instead of requiring manual review -- a cross-account trust boundary that
+
+    should not be on autopilot.
+
+
+    IMPORTANT for whoever triages this: the row count is NOT the number of
+
+    distinct Transit Gateways. A TGW shared via Resource Access Manager shows
+
+    up in `describe-transit-gateways` from EVERY account it is shared with, not
+
+    just the owner, so the same physical resource is reported once per member
+
+    account and a single widely shared gateway can account for most of the
+
+    rows. This is the same cross-account-visibility caveat AWS documents for
+
+    FSBP EC2.10 and shared VPCs; it is not a c7n bug, and there is no
+
+    declarative filter that deduplicates a RAM-shared resource across separate
+
+    per-account c7n-org invocations. Dedup by TransitGatewayId if you need a
+
+    true count.
+
+    '
+  filters:
+  - type: value
+    key: Options.AutoAcceptSharedAttachments
+    value: enable
+- name: vpn-tunnel-logging-disabled
+  resource: aws.vpn-connection
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - CIS 5.3
+    - PCI 10.4.2
+    - FSBP EC2.171
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Site-to-Site VPN connections where at least one tunnel has no CloudWatch
+
+    Logs enabled (IPsec/IKE negotiation and DPD messages).
+
+    [FSBP EC2.171]
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: Options.TunnelOptions[].LogOptions.CloudWatchLogOptions.LogEnabled
+      op: contains
+      value: false
+    - type: value
+      key: Options.TunnelOptions[].LogOptions.CloudWatchLogOptions.LogEnabled
+      value: absent
+- name: client-vpn-connection-logging-disabled
+  resource: aws.client-vpn-endpoint
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP EC2.51
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Client VPN endpoints with connection logging disabled: no record of which
+
+    client connected, from where, or for how long.
+
+
+    Both the explicit `false` and the `absent` case are matched, following the
+
+    absent-key rule described in this file''s header.
+
+    [FSBP EC2.51]
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: ConnectionLogOptions.Enabled
+      value: false
+    - type: value
+      key: ConnectionLogOptions.Enabled
+      value: absent
+- name: vpc-missing-interface-endpoint-ec2
+  resource: aws.vpc
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Non-default VPCs with no interface VPC endpoint for the EC2 service (no
+
+    PrivateLink path for EC2 API calls; traffic goes over the public AWS
+
+    network path instead).
+
+    [FSBP EC2.10]
+
+    '
+  filters:
+  - type: value
+    key: IsDefault
+    value: false
+  - not:
+    - type: vpc-endpoint
+      key: ServiceName
+      value: com.amazonaws.*.ec2
+      op: glob
+- name: vpc-missing-interface-endpoint-ecr-api
+  resource: aws.vpc
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.55
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Non-default VPCs with no interface VPC endpoint for the ECR API. See
+
+    vpc-missing-interface-endpoint-ec2 for the default-VPC-inflation caveat
+
+    shared by this whole group of six.
+
+    [FSBP EC2.55]
+
+    '
+  filters:
+  - type: value
+    key: IsDefault
+    value: false
+  - not:
+    - type: vpc-endpoint
+      key: ServiceName
+      value: com.amazonaws.*.ecr.api
+      op: glob
+- name: vpc-missing-interface-endpoint-ecr-dkr
+  resource: aws.vpc
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.56
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Non-default VPCs with no interface VPC endpoint for the ECR Docker Registry
+
+    (image pull/push path). See vpc-missing-interface-endpoint-ec2 for the
+
+    shared caveat.
+
+    [FSBP EC2.56]
+
+    '
+  filters:
+  - type: value
+    key: IsDefault
+    value: false
+  - not:
+    - type: vpc-endpoint
+      key: ServiceName
+      value: com.amazonaws.*.ecr.dkr
+      op: glob
+- name: vpc-missing-interface-endpoint-ssm
+  resource: aws.vpc
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.57
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Non-default VPCs with no interface VPC endpoint for Systems Manager. See
+
+    vpc-missing-interface-endpoint-ec2 for the shared caveat.
+
+    [FSBP EC2.57]
+
+    '
+  filters:
+  - type: value
+    key: IsDefault
+    value: false
+  - not:
+    - type: vpc-endpoint
+      key: ServiceName
+      value: com.amazonaws.*.ssm
+      op: glob
+- name: vpc-missing-interface-endpoint-ssm-incident-contacts
+  resource: aws.vpc
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.58
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Non-default VPCs with no interface VPC endpoint for Systems Manager Incident
+
+    Manager Contacts. See vpc-missing-interface-endpoint-ec2 for the shared
+
+    caveat.
+
+    [FSBP EC2.58]
+
+    '
+  filters:
+  - type: value
+    key: IsDefault
+    value: false
+  - not:
+    - type: vpc-endpoint
+      key: ServiceName
+      value: com.amazonaws.*.ssm-contacts
+      op: glob
+- name: vpc-missing-interface-endpoint-ssm-incidents
+  resource: aws.vpc
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP EC2.60
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Non-default VPCs with no interface VPC endpoint for Systems Manager
+
+    Incident Manager. See vpc-missing-interface-endpoint-ec2 for the shared
+
+    caveat.
+
+    [FSBP EC2.60]
+
+    '
+  filters:
+  - type: value
+    key: IsDefault
+    value: false
+  - not:
+    - type: vpc-endpoint
+      key: ServiceName
+      value: com.amazonaws.*.ssm-incidents
+      op: glob
+- name: eni-source-dest-check-disabled
+  resource: aws.eni
+  metadata:
+    severity: medium
+    category: network
+    frameworks:
+    - FSBP EC2.180
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Network interfaces with source/destination checking disabled, restricted to
+
+    the interface types FSBP''s own control actually evaluates (interface,
+
+    lambda, branch, efa, quicksight, aws_codestar_connections_managed) --
+
+    NAT gateway, Transit Gateway and load-balancer ENIs are explicitly out of
+
+    the control''s scope and disable the check by design, so counting them
+
+    inflates the result by more than an order of magnitude without adding a
+
+    single actionable row.
+
+
+    Read before triaging: within the scoped interface types, virtual network
+
+    appliances (software firewalls, HA heartbeat pairs, routing appliances)
+
+    also disable the check on purpose and are expected matches. The rows worth
+
+    asking about are the ones with no such role behind them, so triage by
+
+    identifying the workload before opening a ticket.
+
+    [FSBP EC2.180]
+
+    '
+  filters:
+  - type: value
+    key: InterfaceType
+    op: in
+    value:
+    - interface
+    - lambda
+    - branch
+    - efa
+    - quicksight
+    - aws_codestar_connections_managed
+  - type: value
+    key: SourceDestCheck
+    value: false
+- name: launch-configuration-imdsv2-not-required
+  resource: aws.launch-config
+  metadata:
+    severity: info
+    category: hardening
+    frameworks:
+    - PCI 2.2.6
+    - FSBP AutoScaling.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Launch Configurations that don''t require IMDSv2 (HttpTokens missing or set
+
+    to `optional`). Not requiring IMDSv2 is the AWS default for a Launch
+
+    Configuration, and Launch Configurations are themselves a deprecated,
+
+    immutable-once-created feature being phased out (see
+
+    asg-not-using-launch-template) -- so this is a METRIC tracking that
+
+    migration, not a per-instance ticket queue.
+
+    [FSBP AutoScaling.3]
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: MetadataOptions.HttpTokens
+      op: ne
+      value: required
+    - type: value
+      key: MetadataOptions
+      value: absent
+- name: launch-configuration-assigns-public-ip
+  resource: aws.launch-config
+  metadata:
+    severity: high
+    category: exposure
+    frameworks:
+    - PCI 1.4.4
+    - FSBP Autoscaling.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Launch Configurations that EXPLICITLY assign a public IP to every instance
+
+    they launch.
+
+
+    Explicit only: on most Launch Configurations AssociatePublicIpAddress is
+
+    absent rather than False, which means they inherit whatever the target
+
+    subnet''s own auto-assign-public-ip setting is at launch time -- that
+
+    exposure path is covered separately by
+
+    subnet-auto-assigns-public-ip-non-default-vpc, not double-counted here. A
+
+    bare `value: true` match is safe against the absent case (None != True in
+
+    Python, so absence never matches), unlike `op: ne` which would have turned
+
+    every absent LC into a false positive.
+
+
+    Kept at daily, not 4h, despite being a public-IP-exposure control: a Launch
+
+    Configuration cannot be modified after creation (AWS enforces this), so its
+
+    exposure state never changes after the fact -- a daily scan catches a newly
+
+    created non-compliant LC within 24h just as well as a 4h one would, and
+
+    promoting the whole aws.launch-config type to 4h buys no faster detection
+
+    of anything, only a more expensive enumeration of a legacy, shrinking
+
+    resource type.
+
+    [FSBP Autoscaling.5]
+
+    '
+  filters:
+  - type: value
+    key: AssociatePublicIpAddress
+    value: true
+- name: inventory-ec2-using-imdsv1-60d
+  resource: aws.ec2
+  metadata:
+    frequency: daily
+  description: 'EC2 instances that made at least one unauthenticated instance
+
+    metadata call (the MetadataNoToken CloudWatch metric) in the last
+
+    60 days -- live IMDSv1 usage observed on the instance, not just a
+
+    permissive setting.
+
+    '
+  filters:
+  - type: metrics
+    name: MetadataNoToken
+    statistics: Sum
+    days: 60
+    value: 0
+    missing-value: 0
+    op: gt
+- name: ssm-ec2-managed-instances-without-patch-compliance-data
+  resource: aws.ec2
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP SSM.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SSM-managed EC2 instances with NO Patch Manager compliance record at
+
+    all -- not COMPLIANT, not NON_COMPLIANT, simply never scanned.
+
+
+    WHY THIS IS WRITTEN AS A NEGATION AND NOT `states: [NON_COMPLIANT]`.
+
+    FSBP SSM.2 reads directly as "flag the NON_COMPLIANT instances" -- and
+
+    where Patch Manager is not scanning anything, that literal spelling
+
+    returns 0 findings, which looks exactly like "the fleet is 100%
+
+    patched." `ssm:ListResourceComplianceSummaries` returning zero rows for
+
+    ComplianceType=Patch is a rollout gap, not a clean bill of health, and
+
+    it is entirely possible for an estate to report plenty of
+
+    ComplianceType=Association rows while having no Patch rows at all. It is
+
+    the same shape of bug this catalogue guards against elsewhere: an absent
+
+    signal read as a healthy one, just one level up (a whole compliance TYPE
+
+    absent, not a single field). This policy asks the inverse question
+
+    instead: which SSM-managed instances have NO Patch record of EITHER
+
+    status. `states: [COMPLIANT, NON_COMPLIANT]` matches an instance with
+
+    ANY record, and the `not:` wrapper flags the ones with none. The `ssm`
+
+    pre-filter restricts this to instances SSM actually manages, so an EC2
+
+    instance that was never SSM-managed in the first place (a different,
+
+    uninteresting kind of "no record") does not also show up here.
+
+
+    Where Patch Manager has simply never been rolled out, this reports every
+
+    managed instance: a METRIC of rollout state, not a per-resource ticket
+
+    queue, which is why it is scored info.
+
+    '
+  filters:
+  - type: ssm
+    key: PingStatus
+    value: present
+  - not:
+    - type: ssm-compliance
+      compliance_types:
+      - Patch
+      states:
+      - COMPLIANT
+      - NON_COMPLIANT
+- name: ssm-ec2-association-compliance-non-compliant
+  resource: aws.ec2
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP SSM.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SSM-managed EC2 instances whose State Manager association compliance
+
+    is NON_COMPLIANT. Unlike Patch compliance (see the sibling policy
+
+    above), Association compliance IS actually being evaluated wherever
+
+    State Manager is in use -- so a match here is real non-compliance, not
+
+    an absent scan. A NON_COMPLIANT association usually means a baseline the
+
+    account depends on (patch group membership, a required agent, a required
+
+    config document) silently stopped applying on that instance. Published
+
+    as a fleet-level metric (severity info) rather than a per-resource
+
+    ticket; re-score it to suit how your organisation triages this.
+
+
+    Uses the native `ssm-compliance` filter
+
+    (`ssm:ListResourceComplianceSummaries`). `states: [NON_COMPLIANT]` is
+
+    declared explicitly even though it matches the filter''s own JSON-schema
+
+    default: verified live that the schema default is NOT auto-injected at
+
+    runtime (`SsmCompliance.process` reads `self.data[''states'']` directly,
+
+    with no `.get()` fallback) -- omitting it throws `KeyError: ''states''`
+
+    the moment the policy actually runs.
+
+    '
+  filters:
+  - type: ssm-compliance
+    compliance_types:
+    - Association
+    states:
+    - NON_COMPLIANT
+- name: inventory-ebs-snapshots-shared-cross-account
+  resource: aws.ebs-snapshot
+  metadata:
+    frequency: 4h
+  description: 'Owned EBS snapshots shared via createVolumePermission with an account
+
+    outside the organisation. The external account can create a volume from
+
+    it; for an ENCRYPTED snapshot it also needs grants on the KMS key, so
+
+    the share alone does not prove the data is readable.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+- name: inventory-amis-shared-cross-account
+  resource: aws.ami
+  metadata:
+    frequency: 4h
+  description: 'Owned AMIs shared via launchPermission with any account other than
+
+    their own. No whitelist is applied here, so this includes sharing
+
+    with sibling accounts inside the organisation, not just external ones.
+
+    '
+  filters:
+  - type: cross-account
+- name: ec2-instances-with-public-ip
+  resource: ec2
+  metadata:
+    frequency: 4h
+  description: 'Running EC2 instances (State.Name running) with a PublicIpAddress
+
+    assigned. A public IP puts the instance directly on the internet
+
+    path, one misconfigured security group away from being reachable
+
+    from anywhere.
+
+    '
+  filters:
+  - type: value
+    key: PublicIpAddress
+    op: not-equal
+    value: null
+  - type: value
+    key: State.Name
+    op: equal
+    value: running
+- name: internet-gateway-attached
+  resource: aws.internet-gateway
+  metadata:
+    frequency: daily
+  description: 'Internet Gateways currently attached to a VPC
+
+    (Attachments[0].VpcId is set) -- the subset of the account''s IGWs
+
+    that actually provide a live path to the internet, as opposed to
+
+    ones left provisioned but unattached.
+
+    '
+  filters:
+  - type: value
+    key: Attachments[0].VpcId
+    value: present
+- name: vpc-flow-logs-disabled
+  resource: aws.vpc
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - CIS 3.9
+    - PCI 10.2.1
+    - 'SOX ITGC: Operations'
+    - FSBP EC2.6
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'VPCs with no flow logs enabled. Without flow logs there is no way to reconstruct
+
+    lateral movement or exfiltration at the network level.
+
+    CIS AWS Foundations 3.9. Moderate volume expected: a good share of these will be
+
+    empty default VPCs.
+
+    '
+  filters:
+  - type: flow-logs
+    count: 0
+- name: ec2-imdsv2-not-enforced
+  resource: aws.ec2
+  metadata:
+    severity: high
+    category: hardening
+    frameworks:
+    - CIS 5.6
+    - PCI 2.2.1
+    - FSBP EC2.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Running EC2 instances that still allow IMDSv1 (HttpTokens other than
+
+    "required"). It measures ENFORCEMENT, not observed usage: an instance that does
+
+    not use IMDSv1 today but still allows it remains vulnerable to an SSRF that
+
+    steals the role''s credentials -- the Capital One vector.
+
+
+    It is the cheap complement to the policies in detect-imdsv1-usage.yaml,
+
+    which rely on the `metrics` filter: that filter makes ONE CloudWatch call PER
+
+    RESOURCE (MetricsFilter.process_resource_set iterates `for r in resource_set`)
+
+    with only 3 threads, and its cache is -- per c7n''s own comment -- "policy
+
+    scoped, not across policies", so two policies over the same metric pay for the
+
+    call twice.
+
+
+    This policy does not touch CloudWatch: EC2 is described anyway and HttpTokens
+
+    comes back in the response. Zero marginal cost.
+
+    '
+  filters:
+  - type: value
+    key: MetadataOptions.HttpTokens
+    value: optional
+  - type: value
+    key: State.Name
+    value: running
+- name: inventory-public-ip
+  resource: aws.eni
+  metadata:
+    frequency: daily
+  description: 'Inventory of every network interface (ENI) with a public IP address
+
+    associated (Association.PublicIp present).
+
+    '
+  filters:
+  - type: value
+    key: Association.PublicIp
+    value: present
+- name: security-group-unrestricted-ingress-ports
+  resource: aws.security-group
+  metadata:
+    frequency: 4h
+  description: 'Security groups with at least one ingress rule open to 0.0.0.0/0 or
+
+    ::/0, on any port -- not limited to the sensitive ports that
+
+    security-group-sensitive-port-reachable-from-internet checks.
+
+    Notify-only: it surfaces every wide-open rule for review, whether or
+
+    not something is actually listening on the open port.
+
+    '
+  filters:
+  - or:
+    - type: ingress
+      Cidr:
+        value: 0.0.0.0/0
+    - type: ingress
+      CidrV6:
+        value: ::/0
+- name: ec2-ssm-enabled
+  resource: ec2
+  metadata:
+    frequency: daily
+  description: 'EC2 instances whose SSM agent is currently reporting PingStatus
+
+    Online -- actually reachable through Systems Manager right now, not
+
+    just installed. Base list for anything that depends on SSM
+
+    connectivity (patching, command execution, Session Manager).
+
+    '
+  filters:
+  - type: ssm
+    key: PingStatus
+    value: Online
+- name: unused-key-pairs
+  description: 'EC2 key pairs whose name is not currently referenced by any EC2
+
+    instance or Auto Scaling launch config/template. Not the same as
+
+    never used -- a key retired from every live resource still lingers in the account unless
+
+    removed. Verify before deleting: the filter sees current AWS
+
+    references, not whether someone still holds the private key for manual
+
+    access.
+
+    '
+  resource: aws.key-pair
+  metadata:
+    frequency: daily
+  filters:
+  - type: unused

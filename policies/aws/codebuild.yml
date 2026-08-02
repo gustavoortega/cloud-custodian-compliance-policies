@@ -1,0 +1,156 @@
+policies:
+- name: codebuild-privileged-mode-enabled
+  resource: aws.codebuild
+  description: 'CodeBuild project in privileged mode: the build runs with access to the host''s
+
+    Docker daemon. A compromised buildspec or dependency escalates to the build
+
+    infrastructure that produces the images later running in production -- a direct
+
+    supply chain path into the deployed artefacts. It is only justified for reviewed
+
+    docker-in-docker builds. Source: cloudsploit codebuild
+
+    buildProjectEnvPriviligedMode (Prowler does not cover it: union of catalogues).
+
+    '
+  metadata:
+    severity: high
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 2.2.1
+    frequency: 4h
+  filters:
+  - type: value
+    key: environment.privilegedMode
+    value: true
+- name: codebuild-plaintext-secret-env-vars
+  resource: aws.codebuild
+  description: 'CodeBuild project with PLAINTEXT environment variables whose NAME indicates a
+
+    credential (SECRET/PASSWORD/API_KEY/TOKEN/...). They are visible in the console,
+
+    in the API and in the build logs to anyone with read access to CI, so a
+
+    credential placed there leaks into the build history. They must go through
+
+    PARAMETER_STORE or SECRETS_MANAGER. The regex is deliberately matched against
+
+    variable names and not values: matching values produces false positives on
+
+    harmless build variables that merely happen to carry token-like strings.
+
+    Source: prowler codebuild_project_no_secrets_in_variables (critical).
+
+    '
+  metadata:
+    severity: critical
+    category: secrets
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 8.6
+    - 'SOX ITGC: Access'
+    - FSBP CodeBuild.2
+    frequency: 4h
+  filters:
+  - type: list-item
+    key: environment.environmentVariables
+    attrs:
+    - type: value
+      key: type
+      value: PLAINTEXT
+    - type: value
+      key: name
+      op: regex
+      value: .*(SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_KEY|ACCESS_KEY|CREDENTIAL|AUTH_?TOKEN|ACCESS_TOKEN|GITHUB_TOKEN)
+- name: codebuild-source-credentials-embedded
+  resource: aws.codebuild
+  description: 'CodeBuild project whose source URL carries embedded credentials
+
+    (https://user:password@repo). The repository credential sits in the project
+
+    definition, readable by anyone with codebuild:BatchGetProjects, and grants
+
+    access to the source code it points at. OAuth/CodeConnections must be used
+
+    instead. Source: prowler
+
+    codebuild_project_source_repo_url_no_sensitive_credentials (critical).
+
+    '
+  metadata:
+    severity: critical
+    category: secrets
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 8.6
+    - 'SOX ITGC: Access'
+    - FSBP CodeBuild.1
+    frequency: 4h
+  filters:
+  - type: value
+    key: source.location
+    op: regex
+    value: https?://[^/@]+:[^/@]+@.*
+- name: codebuild-project-publicly-visible
+  resource: aws.codebuild
+  description: 'CodeBuild project with public visibility (PUBLIC_READ): build logs and artefacts
+
+    become readable by any AWS account in the world. Build logs routinely leak
+
+    internal endpoints, bucket names and sometimes tokens: free reconnaissance over
+
+    the pipeline. Source: prowler codebuild_project_not_publicly_accessible (high).
+
+    '
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    frequency: 4h
+  filters:
+  - type: value
+    key: projectVisibility
+    value: PUBLIC_READ
+- name: codebuild-s3-logs-not-encrypted
+  resource: aws.codebuild
+  metadata:
+    severity: low
+    category: encryption
+    frameworks:
+    - FSBP CodeBuild.3
+    - PCI 10.3.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CodeBuild projects exporting build logs to S3 without encryption.
+
+
+    IMPORTANT measured trap this avoids: `logsConfig` is entirely absent from
+
+    `batch_get_projects` for a project that never configured it explicitly --
+
+    live-verified, including on a project whose CloudWatch log group
+
+    demonstrably exists and is receiving logs. AWS does not echo back an
+
+    implicit default in this field; absence means "never explicitly
+
+    configured", not "logging disabled". This filter requires
+
+    `s3Logs.status == ENABLED` before ever looking at encryption, so an
+
+    absent `logsConfig` reads as compliant (nothing to encrypt), never as
+
+    a false failure.
+
+    '
+  filters:
+  - type: value
+    key: logsConfig.s3Logs.status
+    value: ENABLED
+  - type: value
+    key: logsConfig.s3Logs.encryptionDisabled
+    value: true

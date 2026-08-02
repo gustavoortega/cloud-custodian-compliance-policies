@@ -1,0 +1,34 @@
+policies:
+- name: stepfunctions-state-machine-logging-disabled
+  resource: aws.step-machine
+  description: 'Step Functions state machine with logging off (level OFF). State machines
+
+    orchestrate business flows, and without logs there is no forensic trace of what
+
+    ran what, with which input and who triggered it -- exactly what is needed when a
+
+    flow is executed twice or never. Source: prowler
+
+    stepfunctions_statemachine_logging_enabled (medium).
+
+    '
+  metadata:
+    severity: medium
+    category: logging
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 10.2.1
+    - 'SOX ITGC: Operations'
+    - FSBP StepFunctions.1
+    frequency: daily
+  filters:
+  - type: value
+    key: status
+    value: ACTIVE
+  - or:
+    - type: value
+      key: loggingConfiguration.level
+      value: 'OFF'
+    - type: value
+      key: loggingConfiguration.level
+      value: absent

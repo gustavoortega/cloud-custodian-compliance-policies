@@ -1,0 +1,27 @@
+policies:
+- name: sns-topic-external-access
+  resource: aws.sns
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    - FSBP SNS.4
+    frequency: 4h
+  description: 'SNS topics whose policy grants access to principals outside the organisation.
+
+    Wherever SES is used, bounce/complaint topics are typical candidates for old and
+
+    overly open policies, so they are worth checking first.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'

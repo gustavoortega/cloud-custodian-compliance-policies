@@ -1,0 +1,406 @@
+policies:
+- name: cloudfront-distribution-without-waf
+  resource: aws.distribution
+  metadata:
+    severity: medium
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 6.4.2
+    - FSBP CloudFront.6
+    frequency: 4h
+  description: 'Enabled CloudFront distributions with no WAF attached.
+
+
+    WAF coverage on load balancers is checked by a separate control, but CloudFront
+
+    is the layer that receives internet traffic first, so a distribution without a
+
+    web ACL is unfiltered at the point where filtering is cheapest.
+
+
+    Kept at medium rather than high because an upstream CDN or reverse proxy in
+
+    front of the domain may already provide the WAF layer, which has to be
+
+    confirmed per distribution when triaging.
+
+    '
+  filters:
+  - type: value
+    key: Enabled
+    value: true
+  - type: value
+    key: WebACLId
+    value: empty
+- name: cloudfront-distribution-weak-tls
+  resource: aws.distribution
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP CloudFront.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CloudFront distributions accepting TLS below 1.2. It is an automatic finding in
+
+    a PCI ASV scan.
+
+    '
+  filters:
+  - type: value
+    key: ViewerCertificate.MinimumProtocolVersion
+    op: in
+    value:
+    - SSLv3
+    - TLSv1
+    - TLSv1_2016
+    - TLSv1.1_2016
+- name: cloudfront-origin-bucket-does-not-exist
+  resource: aws.distribution
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - FSBP CloudFront.12
+    frequency: 4h
+  description: 'CloudFront distributions whose S3 origin points at a bucket that does not exist
+
+    in the distribution''s own account.
+
+
+    Why it is high and not medium: S3 bucket names are global and first-come,
+
+    first-served, so a dangling origin is a takeover that needs no exploit. Anyone
+
+    with an AWS account can create the missing name, and CloudFront will then serve
+
+    their content from the distribution''s hostname. There is no owner validation on
+
+    a custom origin, and OAC does not help: it stops viewers bypassing CloudFront,
+
+    it does not stop someone impersonating the origin.
+
+
+    The filter is deliberately NOT restricted to Enabled distributions: on a
+
+    disabled one the name is still claimable, and if the distribution is managed by
+
+    terraform that also declares the bucket, a third party taking the name first
+
+    breaks the apply and leaves the alias pointing at someone else''s content.
+
+
+    Known false positive to expect: the filter compares against the bucket list of
+
+    the account the distribution lives in, so a legitimate cross-account origin of
+
+    your own also fires. If one appears, confirm the bucket exists somewhere (403
+
+    rather than 404 on head_bucket) before treating it as a finding.
+
+    '
+  filters:
+  - type: mismatch-s3-origin
+    check_custom_origins: true
+- name: cloudfront-s3-origin-without-default-root-object
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: access-control
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 2.2.6
+    - FSBP CloudFront.1
+  description: 'CloudFront distributions whose origins are ALL S3 (the control does not
+
+    apply to distributions with a custom origin) and that have no default
+
+    root object configured. Without a default root object, a request for the
+
+    distribution''s bare root URL can expose the origin bucket''s listing
+
+    instead of a chosen page. DefaultRootObject is empty unless it is
+
+    explicitly set, so this condition describes the whole distribution
+
+    population rather than an anomaly inside it: a METRIC, not a
+
+    per-distribution ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: length(Origins.Items[?CustomOriginConfig])
+    value: 0
+  - type: value
+    key: length(Origins.Items)
+    op: greater-than
+    value: 0
+  - type: distribution-config
+    key: DefaultRootObject
+    value: absent
+- name: cloudfront-viewer-protocol-allow-all
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 4.2.1
+    - FSBP CloudFront.3
+  description: 'CloudFront distributions where the default cache behavior or any
+
+    additional cache behavior has ViewerProtocolPolicy set to `allow-all`
+
+    (plain HTTP accepted from viewers, no redirect to HTTPS). The JMESPath
+
+    expression flattens the default behavior together with the optional
+
+    additional ones, so a single non-default behavior left on `allow-all` is
+
+    enough to match. Published as a fleet-level metric rather than a
+
+    per-distribution ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: '[[DefaultCacheBehavior], (CacheBehaviors.Items || `[]`)][] | [?ViewerProtocolPolicy==''allow-all'']
+      | length(@)'
+    op: greater-than
+    value: 0
+- name: cloudfront-without-origin-failover
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: resilience
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP CloudFront.4
+  description: 'CloudFront distributions with no origin group configured with at least 2
+
+    origins (no failover). Origin groups are opt-in: a distribution created
+
+    without one simply has no failover, which is the default state, so this
+
+    condition describes the whole distribution population rather than an
+
+    anomaly inside it -- a METRIC, not a per-distribution ticket queue, and
+
+    low severity upstream in FSBP too. Note the empty-list fallback in the
+
+    expression: OriginGroups may be absent entirely, and without it the
+
+    length() call would be evaluated against null.
+
+    '
+  filters:
+  - type: distribution-config
+    key: length((OriginGroups.Items || `[]`)[?length(Members.Items) >= `2`])
+    value: 0
+- name: cloudfront-distribution-logging-disabled
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 10.4.2
+    - FSBP CloudFront.5
+  description: 'CloudFront distributions with standard (legacy) access logging disabled.
+
+    Logging is off by default on a new distribution, so this control describes
+
+    the whole distribution population: a METRIC, not a per-distribution ticket
+
+    queue.
+
+    '
+  filters:
+  - or:
+    - type: distribution-config
+      key: Logging.Enabled
+      value: false
+    - type: distribution-config
+      key: Logging.Enabled
+      value: absent
+- name: cloudfront-using-default-certificate
+  resource: aws.distribution
+  metadata:
+    severity: low
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP CloudFront.7
+  description: 'CloudFront distributions still using the CloudFront-provided default
+
+    certificate instead of a custom ACM/IAM one. A distribution in this state
+
+    only serves its `*.cloudfront.net` name over TLS: no custom domain name is
+
+    presented to viewers, which is why the severity is low but the finding is
+
+    still worth listing.
+
+    '
+  filters:
+  - type: value
+    key: ViewerCertificate.CloudFrontDefaultCertificate
+    value: true
+- name: cloudfront-custom-origin-unencrypted
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 4.2.1
+    - FSBP CloudFront.9
+  description: 'CloudFront distributions with a custom (non-S3) origin whose origin
+
+    protocol policy is `http-only`, or `match-viewer` while the viewer
+
+    protocol policy allows plain HTTP -- either way, CloudFront can talk to
+
+    the origin in the clear. The `match-viewer` branch is the reason this
+
+    filter is not a single value check: that setting is only insecure in
+
+    combination with a viewer policy of `allow-all`, so both have to be
+
+    evaluated together. Published as a fleet-level metric rather than a
+
+    per-distribution ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: length(Origins.Items[?CustomOriginConfig])
+    op: greater-than
+    value: 0
+  - or:
+    - type: value
+      key: length(Origins.Items[?CustomOriginConfig.OriginProtocolPolicy=='http-only'])
+      op: greater-than
+      value: 0
+    - and:
+      - type: value
+        key: length(Origins.Items[?CustomOriginConfig.OriginProtocolPolicy=='match-viewer'])
+        op: greater-than
+        value: 0
+      - type: value
+        key: '[[DefaultCacheBehavior], (CacheBehaviors.Items || `[]`)][] | [?ViewerProtocolPolicy==''allow-all'']
+          | length(@)'
+        op: greater-than
+        value: 0
+- name: cloudfront-s3-origin-without-oac
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: access-control
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP CloudFront.13
+  description: 'CloudFront distributions with an S3 origin that has no origin access
+
+    control (OAC) configured. Without OAC (or the older OAI), the bucket can
+
+    potentially be reached directly rather than only through this
+
+    distribution, depending on the bucket''s own policy. OAC is opt-in, so its
+
+    absence is the default state of a distribution and this condition
+
+    describes the whole population rather than an anomaly inside it: a
+
+    METRIC, not a per-distribution ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: length(Origins.Items[?S3OriginConfig])
+    op: greater-than
+    value: 0
+  - type: value
+    key: length(Origins.Items[?S3OriginConfig && !OriginAccessControlId])
+    op: greater-than
+    value: 0
+- name: cloudfront-tls-policy-not-recommended
+  resource: aws.distribution
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP CloudFront.15
+  description: 'CloudFront distributions using a custom SSL/TLS certificate with SNI (not
+
+    the legacy dedicated-IP/vip support method) whose minimum TLS security
+
+    policy is not one of the currently recommended ones
+
+    (TLSv1.2_2021/TLSv1.2_2025/TLSv1.3_2025). The two filters above the
+
+    version check are not optional: per FSBP''s own definition this control
+
+    only evaluates that subset, and MinimumProtocolVersion is meaningless on
+
+    a distribution using the CloudFront default certificate. Published as a
+
+    fleet-level metric rather than a per-distribution ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: ViewerCertificate.CloudFrontDefaultCertificate
+    value: false
+  - type: value
+    key: ViewerCertificate.SSLSupportMethod
+    value: sni-only
+  - type: value
+    key: ViewerCertificate.MinimumProtocolVersion
+    op: not-in
+    value:
+    - TLSv1.2_2021
+    - TLSv1.2_2025
+    - TLSv1.3_2025
+- name: cloudfront-lambda-url-origin-without-oac
+  resource: aws.distribution
+  metadata:
+    severity: high
+    category: access-control
+    owner_tag: resource-owner
+    frequency: 4h
+    frameworks:
+    - FSBP CloudFront.16
+  description: 'CloudFront distributions with an AWS Lambda function URL as an origin that
+
+    has no origin access control configured. Kept at 4h and high severity
+
+    because an unrestricted Lambda function URL behind CloudFront is a
+
+    publicly-invokable function -- the same class of exposure as an open
+
+    security group, worth catching within hours. The origin is identified by
+
+    the `.lambda-url.` infix in its DomainName, which is the only thing that
+
+    distinguishes it from any other custom origin at the config level.
+
+    '
+  filters:
+  - type: value
+    key: length(Origins.Items[?contains(DomainName, '.lambda-url.') && !OriginAccessControlId])
+    op: greater-than
+    value: 0

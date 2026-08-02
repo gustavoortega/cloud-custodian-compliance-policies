@@ -1,0 +1,35 @@
+policies:
+- name: ssm-document-shared-cross-account
+  resource: aws.ssm-document
+  description: 'An SSM document owned by this account and shared with external accounts or
+
+    publicly (''all''). Documents encode operational runbooks (what gets installed,
+
+    how, with which parameters): sharing them exposes the operational playbook, and
+
+    if another account can execute them against these instances it is remote
+
+    execution with SSM permissions. Reuses the same organisation whitelist as
+
+    secretsmanager-secret-cross-account. Source: prowler
+
+    ssm_documents_set_as_public (high) / cloudsploit ssm ssmDocumentPublicAccess.
+
+    '
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    - FSBP SSM.4
+    frequency: 4h
+  filters:
+  - type: cross-account
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'

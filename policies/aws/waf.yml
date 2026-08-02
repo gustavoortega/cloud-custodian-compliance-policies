@@ -1,0 +1,204 @@
+policies:
+- name: waf-classic-regional-webacl-empty
+  resource: aws.waf-regional
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP WAF.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Classic WAF Regional web ACLs with no rule or rule group attached. An
+
+    ACL with zero rules passes every request through untouched, so the web
+
+    ACL is attached but inert. `Rules` is always present as a list (empty
+
+    `[]` when there truly are none, never missing the key), so
+
+    `value: empty` is unambiguous here and needs no absence guard.
+
+    '
+  filters:
+  - type: value
+    key: Rules
+    value: empty
+- name: waf-classic-global-webacl-empty
+  resource: aws.waf
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP WAF.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Classic WAF Global (CloudFront-scope) web ACLs with no rule or rule
+
+    group attached -- same condition as the regional sibling above, on the
+
+    global-scope resource type.
+
+
+    `conditions: region == us-east-1` is not optional here: `aws.waf` is a
+
+    `global_resource` reachable identically from any region''s endpoint,
+
+    and is NOT in main.py''s GLOBAL_RESOURCES list, so c7n-org enumerates
+
+    it in every region scanned. Without this guard the same ACLs would
+
+    report once per region. See the WAF file-section header.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: value
+    key: Rules
+    value: empty
+- name: wafv2-webacl-empty-regional
+  resource: aws.wafv2
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP WAF.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'REGIONAL-scope WAFv2 web ACLs (protecting ALBs/API Gateway/AppSync,
+
+    not CloudFront) with no rule or rule group. An ACL with zero rules
+
+    passes every request through untouched, regardless of its default action
+
+    for anything not covered by a rule.
+
+
+    Split from the CLOUDFRONT-scope policy below because `Scope` changes
+
+    whether the region guard is needed -- see the WAF file-section header.
+
+    `query: Scope: REGIONAL` is also the DescribeWafV2 default, so it is
+
+    written explicitly here only for readability, not because leaving it
+
+    out would change behaviour.
+
+    '
+  query:
+  - Scope: REGIONAL
+  filters:
+  - type: value
+    key: Rules
+    value: empty
+- name: wafv2-webacl-empty-cloudfront
+  resource: aws.wafv2
+  metadata:
+    severity: info
+    category: exposure
+    frameworks:
+    - FSBP WAF.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CLOUDFRONT-scope WAFv2 web ACLs with no rule or rule group -- same
+
+    condition as the REGIONAL sibling above, on the other scope.
+
+
+    `conditions: region == us-east-1` is required: c7n''s own
+
+    `WafV2ResourceQuery` always resolves CLOUDFRONT-scope calls against
+
+    us-east-1 regardless of which region c7n-org is iterating, so without
+
+    this guard the same ACLs would report once per region scanned (same
+
+    class of problem as waf-classic-global-webacl-empty above, different
+
+    resource).
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  query:
+  - Scope: CLOUDFRONT
+  filters:
+  - type: value
+    key: Rules
+    value: empty
+- name: wafv2-rules-without-cloudwatch-metrics-regional
+  resource: aws.wafv2
+  metadata:
+    severity: info
+    category: logging
+    frameworks:
+    - FSBP WAF.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'REGIONAL-scope WAFv2 rules (including rules inside referenced rule
+
+    groups, customer or AWS-managed) with CloudWatch metrics disabled.
+
+    Disabling metrics on a rule hides exactly the signal ("was this rule the
+
+    one that matched") needed to know a WAF change had an effect.
+
+
+    Uses the native `web-acl-rules` filter, which expands every rule
+
+    INSIDE the ACL, including ones that live inside a referenced rule
+
+    group (customer or AWS-managed) via `GetRuleGroup`/
+
+    `DescribeManagedRuleGroup` -- not a hand-rolled walk of the top-level
+
+    `Rules` array, which would miss anything nested in a rule group.
+
+    '
+  query:
+  - Scope: REGIONAL
+  filters:
+  - type: web-acl-rules
+    attrs:
+    - type: value
+      key: VisibilityConfig.CloudWatchMetricsEnabled
+      value: false
+- name: wafv2-rules-without-cloudwatch-metrics-cloudfront
+  resource: aws.wafv2
+  metadata:
+    severity: info
+    category: logging
+    frameworks:
+    - FSBP WAF.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'CLOUDFRONT-scope WAFv2 rules (including rules inside referenced rule
+
+    groups) with CloudWatch metrics disabled -- the CLOUDFRONT-scope twin of
+
+    the REGIONAL policy above. See that one for the `web-acl-rules`
+
+    mechanism, and the WAF file-section header for why CLOUDFRONT scope
+
+    needs its own region guard.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  query:
+  - Scope: CLOUDFRONT
+  filters:
+  - type: web-acl-rules
+    attrs:
+    - type: value
+      key: VisibilityConfig.CloudWatchMetricsEnabled
+      value: false

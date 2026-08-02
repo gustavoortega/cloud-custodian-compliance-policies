@@ -1,0 +1,145 @@
+policies:
+- name: ses-identity-policy-external-access
+  resource: aws.ses-email-identity
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  description: 'SES identities with an identity policy authorising principals outside the
+
+    organisation to send mail on their behalf.
+
+
+    An open identity policy on a brand domain means a third party can send mail
+
+    that passes SPF and DKIM as if it came from that domain. Against a consumer
+
+    audience that is phishing carrying the legitimate domain, with no signal at all
+
+    for the recipient, which is why this is high and runs on the fast cadence.
+
+
+    Equivalent to Prowler''s `ses_identity_not_publicly_accessible` check. The org
+
+    whitelist keeps legitimate use between your own accounts from being reported.
+
+
+    Limitation: the resource enumerates with the v2 API (list_email_identities), so
+
+    it does not cover identities that exist only in classic SES v1.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+- name: ses-identity-dkim-disabled
+  resource: aws.ses-email-identity
+  metadata:
+    severity: high
+    category: brand
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SES identities verified for sending but with no DKIM signing enabled.
+
+
+    Without DKIM the mail carries no cryptographic signature, so recipients cannot
+
+    tell a legitimate message from a forged one. That makes the identity''s own
+
+    domain usable for phishing its recipients, and it also degrades deliverability:
+
+    several providers send unsigned mail to spam.
+
+
+    Only identities enabled for sending are reported: an unused identity without
+
+    DKIM is not a risk.
+
+    '
+  filters:
+  - type: value
+    key: SendingEnabled
+    value: true
+  - or:
+    - type: value
+      key: DkimAttributes.SigningEnabled
+      value: false
+    - type: value
+      key: DkimAttributes.SigningEnabled
+      value: absent
+- name: ses-identity-dkim-weak-key
+  resource: aws.ses-email-identity
+  metadata:
+    severity: medium
+    category: brand
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SES identities signing with 1024-bit DKIM keys. RSA-1024 has been out of
+
+    recommendation for years and AWS has supported 2048 since 2021: this is a
+
+    configuration change, not a migration.
+
+
+    A signature with a weak key is worse than no signature in terms of real
+
+    guarantee, because it grants confidence without backing it.
+
+    '
+  filters:
+  - type: value
+    key: DkimAttributes.SigningEnabled
+    value: true
+  - type: value
+    key: DkimAttributes.CurrentSigningKeyLength
+    value: RSA_1024_BIT
+- name: ses-configuration-set-tls-not-required
+  resource: aws.ses-configuration-set-v2
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP SES.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SES configuration sets that do not REQUIRE TLS for outbound mail --
+
+    either explicitly set to OPTIONAL or never configured at all.
+
+
+    `op: ne` against a key that can be absent is normally the exact trap
+
+    this repo warns about -- it is safe here ONLY because it was checked
+
+    against FSBP''s own text: "by default, Amazon SES uses opportunistic
+
+    TLS" when DeliveryOptions is never set, which is functionally OPTIONAL.
+
+    Absence therefore means the same thing as an explicit OPTIONAL, and
+
+    both are correctly a fail.
+
+
+    Collected via the sesv2 API''s `get_configuration_set`
+
+    (`aws.ses-configuration-set-v2` in c7n) -- the older v1
+
+    `describe_configuration_set` does not return `DeliveryOptions` at all,
+
+    which is why TlsPolicy looks unmeasurable if you reach for that API.
+
+    '
+  filters:
+  - type: value
+    key: DeliveryOptions.TlsPolicy
+    op: ne
+    value: REQUIRE

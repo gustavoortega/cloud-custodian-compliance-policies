@@ -1,0 +1,136 @@
+policies:
+- name: asg-elb-health-check-not-used
+  resource: aws.asg
+  metadata:
+    severity: info
+    category: availability
+    frameworks:
+    - PCI 2.2
+    - FSBP AutoScaling.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Auto Scaling groups attached to a load balancer or target group that use
+
+    EC2 health checks instead of ELB health checks -- EC2 health checks only see
+
+    "is the instance up", not "is the app actually answering behind the LB", so
+
+    a hung process behind a healthy instance never gets replaced.
+
+
+    The leading `or` restricts the control to ASGs that actually have an LB or
+
+    target group attached; an ASG with neither is out of the control''s scope
+
+    entirely, not a finding. `HealthCheckType: EC2` is the AWS default for a
+
+    new ASG, so what is left still describes the fleet more than an anomaly
+
+    within it: METRIC, not a per-resource ticket queue.
+
+    [FSBP AutoScaling.1]
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: LoadBalancerNames
+      value: not-null
+    - type: value
+      key: TargetGroupARNs
+      value: not-null
+  - type: value
+    key: HealthCheckType
+    op: ne
+    value: ELB
+- name: asg-single-availability-zone
+  resource: aws.asg
+  metadata:
+    severity: info
+    category: availability
+    frameworks:
+    - FSBP AutoScaling.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Auto Scaling groups spanning fewer than 2 Availability Zones. A single-AZ
+
+    ASG can be the deliberate choice for a batch job or to avoid inter-AZ
+
+    transfer cost (FSBP''s own doc calls this out). Published as a fleet-level
+
+    metric rather than a per-resource ticket queue.
+
+    [FSBP AutoScaling.2, default minAvailabilityZones=2]
+
+    '
+  filters:
+  - type: value
+    key: AvailabilityZones
+    value_type: size
+    op: lt
+    value: 2
+- name: asg-single-instance-type-single-az
+  resource: aws.asg
+  metadata:
+    severity: info
+    category: availability
+    frameworks:
+    - FSBP AutoScaling.6
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Auto Scaling groups that do not combine multiple instance types (via a
+
+    MixedInstancesPolicy) AND span 2+ AZs -- the combination FSBP recommends so a
+
+    capacity shortage for one instance type in one AZ doesn''t stall scale-out.
+
+    A MixedInstancesPolicy is opt-in, so an ASG with a single pinned instance
+
+    type is a shape rather than a security gap. Published as a fleet-level
+
+    metric rather than a per-resource ticket queue.
+
+    [FSBP AutoScaling.6]
+
+    '
+  filters:
+  - not:
+    - type: value
+      key: AvailabilityZones
+      value_type: size
+      op: ge
+      value: 2
+    - type: value
+      key: MixedInstancesPolicy.LaunchTemplate.Overrides[].InstanceType
+      value_type: size
+      op: ge
+      value: 2
+- name: asg-not-using-launch-template
+  resource: aws.asg
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP AutoScaling.9
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Auto Scaling groups still created from a Launch Configuration instead of a
+
+    Launch Template (LCs are the deprecated path: no version history, no mixed
+
+    instance policies, missing newer instance-metadata controls). Published as
+
+    a fleet-level metric rather than a per-resource ticket queue; the
+
+    remediation is a migration, not a per-row fix.
+
+    [FSBP AutoScaling.9]
+
+    '
+  filters:
+  - type: value
+    key: LaunchTemplate
+    value: absent
+  - type: value
+    key: MixedInstancesPolicy.LaunchTemplate
+    value: absent

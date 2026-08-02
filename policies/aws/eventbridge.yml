@@ -1,0 +1,35 @@
+policies:
+- name: eventbridge-custom-bus-without-resource-policy
+  resource: aws.event-bus
+  metadata:
+    severity: low
+    category: access-control
+    frameworks:
+    - FSBP EventBridge.3
+    - PCI 10.3.1
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Custom (non-default) EventBridge event buses with no resource-based
+
+    policy attached, meaning every principal in the account can put events
+
+    onto them. The `default` bus is excluded by name because it is created by
+
+    AWS and evaluated separately.
+
+
+    This is a resource-policy / access-control control, which is why it
+
+    runs at 4h -- and since no other family''s policy touches aws.event-bus
+
+    today, this single policy is what sets that type''s cadence.
+
+    '
+  filters:
+  - not:
+    - type: value
+      key: Name
+      value: default
+  - type: value
+    key: Policy
+    value: absent

@@ -1,0 +1,100 @@
+policies:
+- name: athena-workgroup-results-not-encrypted
+  resource: aws.athena-work-group
+  description: 'Active Athena workgroup with no result encryption: every query over the data
+
+    lake materialises its output to S3 with no encryption configuration of its own,
+
+    outside the control of whoever audits the original table. Query results are the
+
+    classic channel through which regulated data leaks out of the encrypted
+
+    perimeter. Source: prowler athena_workgroup_encryption (medium) / cloudsploit
+
+    athena workgroupEncrypted.
+
+    '
+  conditions:
+  - type: value
+    key: account_id
+    op: in
+    value:
+    - '111111111111'
+    - '222222222222'
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 3.5.1
+    frequency: daily
+  filters:
+  - type: value
+    key: State
+    value: ENABLED
+  - type: value
+    key: Configuration.ResultConfiguration.EncryptionConfiguration
+    value: absent
+- name: athena-workgroup-config-not-enforced
+  resource: aws.athena-work-group
+  description: 'Athena workgroup that does not enforce its configuration: any client can
+
+    override the output location and the per-query encryption, redirecting results
+
+    to an arbitrary bucket (even in another account). Without enforcement, the
+
+    control above is decorative. Source: prowler
+
+    athena_workgroup_enforce_configuration (medium) / cloudsploit athena
+
+    workgroupEnforceConfiguration.
+
+    '
+  conditions:
+  - type: value
+    key: account_id
+    op: in
+    value:
+    - '111111111111'
+    - '222222222222'
+  metadata:
+    severity: medium
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 2.2.1
+    frequency: 4h
+  filters:
+  - type: value
+    key: State
+    value: ENABLED
+  - type: value
+    key: Configuration.EnforceWorkGroupConfiguration
+    value: false
+- name: athena-workgroup-logging-disabled
+  resource: aws.athena-work-group
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP Athena.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Athena workgroups with CloudWatch query metrics/logging turned off.
+
+    `PublishCloudWatchMetricsEnabled` is present (true or false) on every
+
+    workgroup, so a match is a real setting and not an unpopulated field.
+
+
+    Expect the default workgroup -- literally named "primary", one per
+
+    account and region, created with metrics publishing off -- to dominate
+
+    the results until someone changes it.
+
+    '
+  filters:
+  - type: value
+    key: Configuration.PublishCloudWatchMetricsEnabled
+    value: false

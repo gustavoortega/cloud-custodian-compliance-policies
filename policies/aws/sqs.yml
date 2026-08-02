@@ -1,0 +1,66 @@
+policies:
+- name: sqs-queue-external-access
+  resource: aws.sqs
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    - FSBP SQS.3
+    frequency: 4h
+  description: 'SQS queues whose policy grants access to principals outside the organisation.
+
+    The org whitelist is not optional: without it, legitimate traffic between your
+
+    own accounts dominates the output and buries the genuinely external grants.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+- name: sqs-queue-not-encrypted-at-rest
+  resource: aws.sqs
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP SQS.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SQS queues with neither a customer KMS key nor SQS-managed SSE
+
+    enabled.
+
+
+    `SqsManagedSseEnabled` comes back from `get_queue_attributes` as the
+
+    STRING "true"/"false", not a boolean -- hence `value: "false"` quoted.
+
+    The attribute is populated on every queue, so there is no absent case to
+
+    guard here; `KmsMasterKeyId`, by contrast, is simply missing when no
+
+    customer key is configured, which is why that half uses `value: absent`.
+
+
+    Does not duplicate `sqs-queue-external-access`: that control is about who
+
+    can reach the queue, this one is about whether its contents are encrypted
+
+    at rest.
+
+    '
+  filters:
+  - type: value
+    key: KmsMasterKeyId
+    value: absent
+  - type: value
+    key: SqsManagedSseEnabled
+    value: 'false'

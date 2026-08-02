@@ -1,0 +1,226 @@
+policies:
+- name: kms-cmk-rotation-disabled
+  resource: aws.kms-key
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - CIS 3.8
+    - PCI 3.7.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Customer-managed KMS keys, symmetric and enabled, that have no automatic
+
+    rotation. The first three filters are necessary: without them the control
+
+    reports AWS-managed and asymmetric keys, which cannot rotate, and it turns into
+
+    noise. CIS AWS Foundations 3.8.
+
+    '
+  filters:
+  - type: value
+    key: KeyManager
+    value: CUSTOMER
+  - type: value
+    key: KeyState
+    value: Enabled
+  - type: value
+    key: KeySpec
+    value: SYMMETRIC_DEFAULT
+  - type: key-rotation-status
+    key: KeyRotationEnabled
+    value: false
+- name: inventory-kms-key-shared-backup-account
+  resource: aws.kms-key
+  description: 'KMS keys whose policy grants access to an account outside the
+
+    organisation''s own account list, AND whose policy TEXT contains the ARN
+
+    of the account designated as the backup account. That second half is a
+
+    raw substring match: the ARN could sit in a Deny, a NotPrincipal or a
+
+    condition, so it does not prove the backup account is granted anything.
+
+    Both conditions must hold, so this surfaces cross-account KMS grants that
+
+    also involve the backup account specifically, not cross-account KMS
+
+    grants in general.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+  - type: value
+    key: Policy
+    value: arn:aws:iam::111111111111:root
+    op: contains
+- name: kms-key-scheduled-for-deletion
+  resource: aws.kms-key
+  metadata:
+    severity: critical
+    category: data-protection
+    frequency: 4h
+    frameworks:
+    - FSBP KMS.3
+    owner_tag: resource-owner
+  description: 'Customer-managed KMS keys with `KeyState: PendingDeletion` (FSBP KMS.3).
+
+
+    Once the waiting period expires the key -- and everything encrypted
+
+    under it -- is unrecoverable, so unlike most config-drift controls the
+
+    DETECTION WINDOW is part of the control itself: a daily cadence can
+
+    consume a meaningful fraction of the minimum 7-day waiting period before
+
+    anyone sees the row. Runs every 4h for that reason, not because the
+
+    finding is expected to be frequent.
+
+    '
+  filters:
+  - type: value
+    key: KeyState
+    value: PendingDeletion
+- name: kms-key-policy-publicly-accessible
+  resource: aws.kms-key
+  metadata:
+    severity: medium
+    category: access-control
+    frequency: 4h
+    frameworks:
+    - FSBP KMS.5
+    owner_tag: resource-owner
+  description: 'KMS key policies that grant access to a principal outside the org, or to
+
+    everyone (FSBP KMS.5), using the same `cross-account` + org-whitelist
+
+    idiom used elsewhere in this repo.
+
+
+    Uses `cross-account-tolerant`
+
+    (`extensions/c7n_pack/filters/kms_unauditable.py`) instead of c7n''s own
+
+    `cross-account`, and the reason is a hard failure mode rather than a
+
+    preference. c7n''s filter calls `GetKeyPolicy` with no try/except, so a
+
+    SINGLE key whose own key policy denies `kms:GetKeyPolicy` to the running
+
+    role raises a ClientError that aborts the ENTIRE invocation for that
+
+    account and region. The account then writes zero RESULTS, which is
+
+    indistinguishable in the output from zero FINDINGS -- the worst possible
+
+    failure mode for a control whose job is to prove a negative.
+
+    `cross-account-tolerant` fetches the same way, tolerates a per-key
+
+    AccessDenied, and runs the identical cross-account check (reusing c7n''s
+
+    own filter class rather than reimplementing it) over every key it COULD
+
+    read. The keys it could not read are not silently dropped: they are
+
+    `kms-key-unauditable`''s finding, below.
+
+
+    Expect a large share of hits to be a key policy statement written
+
+    against a role or user ARN that has since been deleted. AWS rewrites
+
+    those to the unresolvable unique ID left behind (`AROA...`/`AIDA...`),
+
+    and `cross-account` correctly treats an ID it cannot map to an org
+
+    account as external, since there is no way to prove it is yours. That is
+
+    stale-reference cleanup debt rather than a live third-party grant, which
+
+    is why this sits at `medium` here instead of AWS''s own `critical` -- but
+
+    it is still worth clearing, because a dangling grant is exactly the kind
+
+    of policy cruft that becomes a real hole if the unique ID is ever
+
+    reissued. The same pattern is described in
+
+    `secretsmanager-secret-cross-account` elsewhere in this repo.
+
+    '
+  filters:
+  - type: cross-account-tolerant
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+- name: kms-key-unauditable
+  resource: aws.kms-key
+  metadata:
+    severity: medium
+    category: access-control
+    frequency: 4h
+    frameworks:
+    - FSBP KMS.5
+    owner_tag: resource-owner
+  description: 'KMS keys whose OWN key policy denies `kms:GetKeyPolicy` to the role this
+
+    programme runs as -- a role carrying ReadOnlyAccess + SecurityAudit, so
+
+    a denial here is a key-policy restriction, not an IAM gap on the
+
+    caller''s side.
+
+
+    The denial IS the finding: `kms-key-policy-publicly-accessible` above
+
+    cannot determine whether such a key''s policy is public, so a key nobody
+
+    can read could be public right now and this programme would never know
+
+    -- which is exactly the blind spot that control exists to close for
+
+    every OTHER key. Same `medium` severity as its sibling, because both
+
+    express the same underlying gap (cannot prove the policy is safe) from
+
+    opposite sides.
+
+
+    Not a false positive, and not evidence of anything malicious: every row
+
+    is a genuinely unreadable key policy, but the denial is most likely a
+
+    deliberate lockdown by whoever owns the key -- or a third party''s key
+
+    shared into the account -- rather than a sign of compromise.
+
+
+    GUARDED against becoming a blind alarm: if `kms:GetKeyPolicy` denial
+
+    exceeds 25% of an account+region''s keys, `cross-account-tolerant` /
+
+    `unauditable` stop treating it as "a few locked-down keys" and re-raise
+
+    instead, so the run fails loudly (`main.py`: `missing permission`)
+
+    rather than quietly emitting hundreds of identical rows the day an SCP
+
+    or IAM change blocks KMS reads org-wide. See the filter module''s
+
+    docstring for the full reasoning.
+
+    '
+  filters:
+  - type: unauditable

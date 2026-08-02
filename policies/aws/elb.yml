@@ -1,0 +1,754 @@
+policies:
+- name: alb-wafv2-disabled
+  description: 'Internet-facing Application Load Balancers with no WAFv2 web ACL
+
+    associated, excluding ones carrying a tag that asserts an external
+
+    WAF/CDN sits in front of them. That tag is an assertion, not evidence:
+
+    nothing here verifies the load balancer really is behind that WAF, so a
+
+    stale or wrong tag hides a real gap. An ALB with no WAFv2 and nothing
+
+    else in front has no layer-7 filtering between it and the internet.
+
+    '
+  resource: aws.app-elb
+  metadata:
+    frequency: 4h
+  filters:
+  - and:
+    - type: value
+      key: Scheme
+      value: internal
+      op: not-equal
+    - type: value
+      key: Type
+      value: application
+      op: equal
+    - type: wafv2-enabled
+      state: false
+    - or:
+      - tag:external-waf: 'false'
+      - tag:external-waf: absent
+      - tag:external-waf: empty
+- name: alb-http-listener-without-https-redirect
+  resource: aws.app-elb
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.1
+  description: 'Application Load Balancers with an HTTP listener that does not redirect to
+
+    HTTPS -- the listener either forwards HTTP in the clear or its only default
+
+    action isn''t a redirect-to-HTTPS. Note that `aws.app-elb` covers ALB, NLB
+
+    and GLB, so this policy is only meaningful for Type=application.
+
+
+    Published as a fleet-level metric rather than a per-ALB ticket queue,
+
+    which is what `severity: info` means here. The actionable subset when it
+
+    does get triaged is the internet-facing one (Scheme != internal); internal
+
+    ALBs serving plain HTTP inside the VPC (service-mesh ingress and similar)
+
+    are noisy here but not internet-reachable.
+
+
+    The control is about the redirect ACTION, not about whether an HTTPS
+
+    listener merely exists alongside the HTTP one (that was the mistake the
+
+    first time this was implemented for this family). A listener whose
+
+    DefaultActions has no `redirect` entry targeting HTTPS fails even if a
+
+    separate 443 listener is configured correctly.
+
+    '
+  filters:
+  - type: listener
+    key: Protocol
+    value: HTTP
+  - type: listener
+    matched: true
+    key: DefaultActions[?Type=='redirect'] | [0].RedirectConfig.Protocol
+    value: HTTPS
+    op: not-equal
+- name: elb-classic-ssl-listener-non-acm-cert
+  resource: aws.elb
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.2
+  description: 'Classic Load Balancers with an HTTPS/SSL listener whose certificate is not
+
+    issued by ACM (an IAM-uploaded certificate instead). An IAM-uploaded
+
+    certificate has no managed renewal, so this is a certificate-hygiene
+
+    control as much as an encryption one.
+
+
+    Classic load balancers are a separate c7n resource type (`aws.elb`, not
+
+    `aws.app-elb`), so they need their own policy: nothing that targets
+
+    `aws.app-elb` in this repo ever enumerates them.
+
+    '
+  filters:
+  - type: value
+    key: ListenerDescriptions[?Listener.Protocol=='HTTPS' || Listener.Protocol=='SSL']
+    value: not-null
+  - type: value
+    key: length(ListenerDescriptions[?Listener.Protocol=='HTTPS' || Listener.Protocol=='SSL'].Listener.SSLCertificateId[?!contains(@,
+      'arn:aws:acm:')])
+    op: greater-than
+    value: 0
+- name: elb-classic-listener-not-tls
+  resource: aws.elb
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 4.2.1
+    - FSBP ELB.3
+  description: 'Classic Load Balancers where at least one listener is not HTTPS/SSL, i.e. a
+
+    plain TCP/HTTP listener alongside or instead of a TLS one.
+
+
+    The first filter requires ListenerDescriptions to be non-null so that a
+
+    load balancer with no listener at all does not match on an absent key:
+
+    without it the second expression evaluates against None and reports a load
+
+    balancer that serves nothing.
+
+    '
+  filters:
+  - type: value
+    key: ListenerDescriptions
+    value: not-null
+  - type: value
+    key: ListenerDescriptions[?Listener.Protocol!='HTTPS' && Listener.Protocol!='SSL']
+    value: not-null
+- name: alb-invalid-header-fields-not-dropped
+  resource: aws.app-elb
+  metadata:
+    severity: info
+    category: hardening
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 6.2.4
+    - FSBP ELB.4
+  description: 'Application Load Balancers not configured to drop invalid HTTP header
+
+    fields (attribute `routing.http.drop_invalid_header_fields.enabled`). The
+
+    attribute defaults to `false` and is rarely overridden, so this control
+
+    describes the whole ALB population rather than an anomaly inside it: a
+
+    METRIC, not a per-resource ticket queue.
+
+
+    Note from FSBP''s own docs: if ELB.12 (desync mitigation mode) is enforced,
+
+    AWS recommends disabling THIS control instead of running both -- they
+
+    overlap on the same request-smuggling class of issue. Kept here anyway:
+
+    ELB.12 is written as its own policy at higher severity and this one stays
+
+    as the fleet-wide trend underneath it.
+
+
+    `Type: application` is required: this is an HTTP-layer attribute that
+
+    only exists on ALBs. Without that restriction, every NLB/GLB enumerated by
+
+    `aws.app-elb` has no such attribute at all and matches on the `absent`
+
+    branch -- the exact false-positive shape caught live on ELB.12
+
+    (alb-desync-mitigation-not-recommended) for the same attribute family,
+
+    fixed here before it shipped rather than after.
+
+    '
+  filters:
+  - type: value
+    key: Type
+    value: application
+  - or:
+    - type: attributes
+      key: routing.http.drop_invalid_header_fields.enabled
+      value: false
+    - type: attributes
+      key: routing.http.drop_invalid_header_fields.enabled
+      value: absent
+- name: elb-classic-access-logging-disabled
+  resource: aws.elb
+  metadata:
+    severity: medium
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.5
+  description: 'Classic Load Balancers with S3 access logging disabled. FSBP ELB.5 covers
+
+    both classic and v2 load balancers under one control ID; split into two
+
+    named policies here because `aws.elb` and `aws.app-elb` are different c7n
+
+    resource types with different attribute shapes (see
+
+    elbv2-access-logging-disabled below).
+
+    '
+  filters:
+  - type: is-not-logging
+- name: elbv2-access-logging-disabled
+  resource: aws.app-elb
+  metadata:
+    severity: info
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.5
+  description: 'Application and Network Load Balancers with S3 access logging disabled
+
+    (`access_logs.s3.enabled`). The attribute defaults to off, so this control
+
+    describes the whole v2 load-balancer population rather than an anomaly
+
+    inside it: a METRIC, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: is-not-logging
+- name: elbv2-deletion-protection-disabled
+  resource: aws.app-elb
+  metadata:
+    severity: info
+    category: resilience
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.6
+  description: 'Application, Network and Gateway Load Balancers without deletion
+
+    protection. The attribute defaults to off, so this is a METRIC across the
+
+    whole v2 population, not a per-LB ticket queue. Not a
+
+    confidentiality/exposure issue, but an accidental-deletion blast-radius one.
+
+    '
+  filters:
+  - or:
+    - type: attributes
+      key: deletion_protection.enabled
+      value: false
+    - type: attributes
+      key: deletion_protection.enabled
+      value: absent
+- name: elb-classic-connection-draining-disabled
+  resource: aws.elb
+  metadata:
+    severity: low
+    category: resilience
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.7
+  description: 'Classic Load Balancers with connection draining disabled
+
+    (`ConnectionDraining.Enabled`). The `absent` branch is needed because the
+
+    attribute is not always returned; without it a load balancer that never had
+
+    the attribute set would pass as compliant.
+
+    '
+  filters:
+  - or:
+    - type: attributes
+      key: ConnectionDraining.Enabled
+      value: false
+    - type: attributes
+      key: ConnectionDraining.Enabled
+      value: absent
+- name: elb-classic-ssl-policy-not-recommended
+  resource: aws.elb
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 4.2.1
+    - FSBP ELB.8
+  description: 'Classic Load Balancers with an SSL/HTTPS listener not using the predefined
+
+    policy `ELBSecurityPolicy-TLS-1-2-2017-01`, which is the single policy FSBP
+
+    ELB.8 accepts. Two shapes fail it in practice: older predefined policies
+
+    such as `ELBSecurityPolicy-2016-08`, and ad hoc console-generated ones
+
+    (`AWSConsole-SSLNegotiationPolicy*`), which are per-listener custom cipher
+
+    sets rather than a named predefined policy.
+
+    '
+  filters:
+  - type: value
+    key: ListenerDescriptions[?Listener.Protocol=='HTTPS' || Listener.Protocol=='SSL']
+    value: not-null
+  - type: value
+    key: contains(ListenerDescriptions[?Listener.Protocol=='HTTPS' || Listener.Protocol=='SSL'].PolicyNames[],
+      'ELBSecurityPolicy-TLS-1-2-2017-01')
+    value: false
+- name: elb-classic-cross-zone-disabled
+  resource: aws.elb
+  metadata:
+    severity: medium
+    category: resilience
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.9
+  description: 'Classic Load Balancers with cross-zone load balancing disabled
+
+    (`CrossZoneLoadBalancing.Enabled`). The `absent` branch is needed for the
+
+    same reason as in elb-classic-connection-draining-disabled: the attribute
+
+    is not guaranteed to be present.
+
+    '
+  filters:
+  - or:
+    - type: attributes
+      key: CrossZoneLoadBalancing.Enabled
+      value: false
+    - type: attributes
+      key: CrossZoneLoadBalancing.Enabled
+      value: absent
+- name: elb-classic-single-az
+  resource: aws.elb
+  metadata:
+    severity: medium
+    category: resilience
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.10
+  description: 'Classic Load Balancers spanning fewer than 2 Availability Zones -- a
+
+    single point of failure in front of whatever they serve. `value_type:
+
+    size` counts the entries of AvailabilityZones, so this matches a load
+
+    balancer attached to exactly one AZ and also one attached to none.
+
+    '
+  filters:
+  - type: value
+    key: AvailabilityZones
+    value_type: size
+    op: less-than
+    value: 2
+- name: alb-desync-mitigation-not-recommended
+  resource: aws.app-elb
+  metadata:
+    severity: high
+    category: hardening
+    owner_tag: resource-owner
+    frequency: 4h
+    frameworks:
+    - PCI 6.2.4
+    - FSBP ELB.12
+  description: 'Application Load Balancers not configured with `defensive` or `strictest`
+
+    desync mitigation mode (`routing.http.desync_mitigation_mode`). `monitor`
+
+    mode fails the control: it logs the ambiguous requests but does not block
+
+    them.
+
+
+    `Type: application` is required and not optional here: `routing.http.
+
+    desync_mitigation_mode` is an ALB-only attribute -- Network and Gateway
+
+    Load Balancers operate at L4 and don''t have it. Caught live: the first
+
+    version of this policy ran against all of `aws.app-elb` (ALB+NLB+GLB) and
+
+    matched every NLB it enumerated, each of them on the `absent` branch
+
+    alone, because an L4 load balancer never carries the attribute at all.
+
+    Restricting to `Type: application` is what makes the result mean
+
+    anything.
+
+
+    Unlike the rest of this file''s ALB/CLB controls, this stays on the 4h
+
+    cadence: request smuggling / desync is a live network-layer exposure, and
+
+    an ALB slipping out of defensive/strictest mode is the kind of drift worth
+
+    catching within hours, not by the next day''s run.
+
+    '
+  filters:
+  - type: value
+    key: Type
+    value: application
+  - or:
+    - type: attributes
+      key: routing.http.desync_mitigation_mode
+      op: not-in
+      value:
+      - defensive
+      - strictest
+    - type: attributes
+      key: routing.http.desync_mitigation_mode
+      value: absent
+- name: elbv2-single-az
+  resource: aws.app-elb
+  metadata:
+    severity: medium
+    category: resilience
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.13
+  description: 'Application, Network and Gateway Load Balancers spanning fewer than 2
+
+    Availability Zones -- a single point of failure at the edge of whatever
+
+    they front.
+
+    '
+  filters:
+  - type: value
+    key: AvailabilityZones
+    value_type: size
+    op: less-than
+    value: 2
+- name: elb-classic-desync-mitigation-not-recommended
+  resource: aws.elb
+  metadata:
+    severity: high
+    category: hardening
+    owner_tag: resource-owner
+    frequency: 4h
+    frameworks:
+    - PCI 6.2.4
+    - FSBP ELB.14
+  description: 'Classic Load Balancers not configured with `defensive` or `strictest`
+
+    desync mitigation mode (`AdditionalAttributes` key
+
+    `elb.http.desyncmitigationmode`). Same severity and cadence as its v2
+
+    sibling (alb-desync-mitigation-not-recommended) because it is the same
+
+    request-smuggling exposure class: if a classic LB ever drifts off
+
+    `defensive`, the value of finding out is in hours, not the next day.
+
+    '
+  filters:
+  - type: value
+    key: Attributes.AdditionalAttributes[?Key=='elb.http.desyncmitigationmode'].Value | [0]
+    op: not-in
+    value:
+    - defensive
+    - strictest
+- name: elbv2-listener-ssl-policy-not-recommended
+  resource: aws.app-elb
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.17
+  description: 'Application/Network Load Balancer listeners (HTTPS/TLS) not using one of
+
+    the TLS 1.3-era recommended security policies. `ELBSecurityPolicy-2016-08`
+
+    is still the console/API default for a new listener, so this control
+
+    describes the whole listener population rather than an anomaly inside it:
+
+    a METRIC, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: listener
+    key: Protocol
+    op: in
+    value:
+    - HTTPS
+    - TLS
+  - type: listener
+    matched: true
+    key: SslPolicy
+    op: not-in
+    value:
+    - ELBSecurityPolicy-TLS13-1-3-2021-06
+    - ELBSecurityPolicy-TLS13-1-3-FIPS-2023-04
+    - ELBSecurityPolicy-TLS13-1-2-Res-2021-06
+    - ELBSecurityPolicy-TLS13-1-2-Res-FIPS-2023-04
+    - ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09
+    - ELBSecurityPolicy-TLS13-1-3-PQ-2025-09
+    - ELBSecurityPolicy-TLS13-1-2-Res-FIPS-PQ-2025-09
+    - ELBSecurityPolicy-TLS13-1-3-FIPS-PQ-2025-09
+- name: elbv2-listener-insecure-protocol
+  resource: aws.app-elb
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.18
+  description: 'Application Load Balancer listeners using HTTP instead of HTTPS, or Network
+
+    Load Balancer listeners using TCP/UDP instead of TLS. TLS may be
+
+    terminated upstream (a CDN or a proxy) or downstream (the target itself),
+
+    so a match here does not by itself prove plaintext end to end -- which is
+
+    why it is published as a fleet-level metric rather than a per-LB ticket
+
+    queue.
+
+    '
+  filters:
+  - or:
+    - and:
+      - type: value
+        key: Type
+        value: application
+      - type: listener
+        key: Protocol
+        value: HTTP
+    - and:
+      - type: value
+        key: Type
+        value: network
+      - type: listener
+        key: Protocol
+        op: in
+        value:
+        - TCP
+        - UDP
+- name: elbv2-target-group-healthcheck-not-encrypted
+  resource: aws.app-elb-target-group
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.21
+  description: 'Target groups (excluding Lambda targets, which this control does not
+
+    apply to) whose health check protocol is not HTTPS. HealthCheckProtocol
+
+    defaults to the target group''s own Protocol when it is not set
+
+    explicitly, so this mostly tracks the traffic protocol rather than an
+
+    independent choice. Published as a fleet-level metric rather than a
+
+    per-target-group ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: TargetType
+    value: lambda
+    op: not-equal
+  - type: value
+    key: HealthCheckProtocol
+    value: HTTPS
+    op: not-equal
+- name: elbv2-target-group-protocol-not-encrypted
+  resource: aws.app-elb-target-group
+  metadata:
+    severity: info
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - FSBP ELB.22
+  description: 'Target groups (excluding Lambda and ALB target types, and GENEVE, none of
+
+    which this control applies to) whose protocol is not HTTPS/TLS/QUIC. The
+
+    three exclusions are FSBP''s own: Lambda and ALB target types have no wire
+
+    protocol of their own to check, and GENEVE belongs to Gateway Load
+
+    Balancers. Published as a fleet-level metric rather than a
+
+    per-target-group ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: TargetType
+    op: not-in
+    value:
+    - lambda
+    - alb
+  - type: value
+    key: Protocol
+    value: GENEVE
+    op: not-equal
+  - type: value
+    key: Protocol
+    op: not-in
+    value:
+    - HTTPS
+    - TLS
+    - QUIC
+- name: alb-and-nlb-internet-facing
+  description: 'Application and Network Load Balancers with Scheme other than
+
+    internal -- internet-facing by AWS''s own classification, reachable
+
+    from outside the VPC unless something else in front of them blocks
+
+    it.
+
+    '
+  resource: aws.app-elb
+  metadata:
+    frequency: daily
+  filters:
+  - and:
+    - type: value
+      key: Scheme
+      value: internal
+      op: not-equal
+- name: clb-internet-facing
+  description: 'Classic Load Balancers with Scheme other than internal --
+
+    internet-facing by AWS''s own classification. Kept as a separate
+
+    policy from the ALB/NLB one because CLB (aws.elb) is a distinct c7n
+
+    resource type from app-elb, with its own Scheme field.
+
+    '
+  resource: aws.elb
+  metadata:
+    frequency: 4h
+  filters:
+  - and:
+    - type: value
+      key: Scheme
+      value: internal
+      op: not-equal
+- name: inventory-clb-with-tls
+  resource: aws.elb
+  metadata:
+    frequency: daily
+  description: 'Inventory of Classic Load Balancers (CLB) that have at least one SSL/TLS listener.
+
+    '
+  filters:
+  - type: is-ssl
+- name: inventory-elbv2-with-tls
+  resource: aws.app-elb
+  metadata:
+    frequency: daily
+  description: 'Inventory of ELBv2 (ALB and NLB) that have TLS/HTTPS listeners.
+
+    ALB uses Protocol=HTTPS and NLB uses Protocol=TLS.
+
+    '
+  filters:
+  - type: listener
+    key: Protocol
+    op: in
+    value:
+    - HTTPS
+    - TLS
+- name: unused-albs-notraffic
+  resource: app-elb
+  metadata:
+    frequency: daily
+  description: 'Application Load Balancers (Type application) with zero total
+
+    requests over the last 30 days (RequestCount metric) and at least 29
+
+    days old, so the zero-traffic window is not just because the ALB was
+
+    just created. A load balancer with no traffic is dead weight: still
+
+    billed hourly and one more listener/target-group configuration
+
+    nobody is watching.
+
+    '
+  filters:
+  - type: metrics
+    name: RequestCount
+    statistics: Sum
+    period: 86400
+    days: 30
+    missing-value: 0
+    op: eq
+    value: 0
+  - type: value
+    key: Type
+    value: application
+  - type: value
+    key: CreatedTime
+    value_type: age
+    op: greater-than
+    value: 29
+- name: alb-wafv2-enabled
+  description: 'Application Load Balancers having a WAF web ACL associated
+
+    '
+  resource: aws.app-elb
+  metadata:
+    frequency: daily
+  filters:
+  - and:
+    - type: value
+      key: Type
+      value: application
+      op: equal
+    - type: wafv2-enabled
+      state: true

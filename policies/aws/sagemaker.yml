@@ -1,0 +1,373 @@
+policies:
+- name: sagemaker-notebook-direct-internet-access
+  resource: aws.sagemaker-notebook
+  description: 'SageMaker notebook with direct internet access. A notebook typically holds a
+
+    copy of production data and has an IAM role attached, so direct internet egress
+
+    enables exfiltration of both the data and the role''s credentials with a single
+
+    malicious pip install, bypassing every VPC egress control. Source: prowler
+
+    sagemaker_notebook_instance_without_direct_internet_access_configured (high) /
+
+    cloudsploit sagemaker notebookDirectInternetAccess.
+
+    '
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    - FSBP SageMaker.1
+    frequency: 4h
+  filters:
+  - type: value
+    key: DirectInternetAccess
+    value: Enabled
+- name: sagemaker-notebook-root-access-enabled
+  resource: aws.sagemaker-notebook
+  description: 'SageMaker notebook with root access enabled. A user -- or a compromised package
+
+    from the ML supply chain -- can install persistent software and read credentials
+
+    from other processes on the notebook. Source: prowler
+
+    sagemaker_notebook_instance_root_access_disabled (medium).
+
+    '
+  metadata:
+    severity: medium
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    - FSBP SageMaker.3
+    frequency: 4h
+  filters:
+  - type: value
+    key: RootAccess
+    value: Enabled
+- name: sagemaker-notebook-unencrypted
+  resource: aws.sagemaker-notebook
+  description: 'SageMaker notebook with no KMS key: the volume where datasets are copied is
+
+    encrypted only with the AWS-managed default key, with no customer-side control
+
+    or audit over access to that key. Regulated data requires a CMK. Source: prowler
+
+    sagemaker_notebook_instance_encryption_enabled (high) / cloudsploit sagemaker
+
+    notebookDataEncrypted.
+
+    '
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 3.5.1
+    frequency: daily
+  filters:
+  - type: value
+    key: KmsKeyId
+    value: absent
+- name: sagemaker-data-quality-job-definition-traffic-encryption-disabled
+  resource: aws.sagemaker-data-quality-job-definition
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP SageMaker.9
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker data quality job definitions without inter-container traffic
+
+    encryption. NetworkConfig is absent on a job definition created without
+
+    an explicit network block, so the `absent` branch is what catches the
+
+    default case.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: false
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: absent
+- name: sagemaker-data-quality-job-definition-network-isolation-disabled
+  resource: aws.sagemaker-data-quality-job-definition
+  metadata:
+    severity: medium
+    category: network-exposure
+    frameworks:
+    - FSBP SageMaker.11
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker data quality job definitions without network isolation. Same
+
+    absent-NetworkConfig reasoning as the traffic-encryption control on this
+
+    resource type.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: NetworkConfig.EnableNetworkIsolation
+      value: false
+    - type: value
+      key: NetworkConfig.EnableNetworkIsolation
+      value: absent
+- name: sagemaker-model-explainability-job-definition-traffic-encryption-disabled
+  resource: aws.sagemaker-model-explainability-job-definition
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP SageMaker.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker model explainability job definitions without inter-container
+
+    traffic encryption. Same predicate as the data-quality control, on the
+
+    explainability job-definition resource type.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: false
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: absent
+- name: sagemaker-model-bias-job-definition-network-isolation-disabled
+  resource: aws.sagemaker-model-bias-job-definition
+  metadata:
+    severity: medium
+    category: network-exposure
+    frameworks:
+    - FSBP SageMaker.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker model bias job definitions without network isolation. Same
+
+    predicate as the data-quality control, on the model-bias job-definition
+
+    resource type.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: NetworkConfig.EnableNetworkIsolation
+      value: false
+    - type: value
+      key: NetworkConfig.EnableNetworkIsolation
+      value: absent
+- name: sagemaker-model-bias-job-definition-traffic-encryption-disabled
+  resource: aws.sagemaker-model-bias-job-definition
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP SageMaker.15
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker model bias job definitions using 2 or more compute instances
+
+    without inter-container traffic encryption. The instance-count condition
+
+    comes from the control itself: it only applies once there is more than
+
+    one instance for traffic to flow between.
+
+    '
+  filters:
+  - type: value
+    key: JobResources.ClusterConfig.InstanceCount
+    op: ge
+    value: 2
+  - or:
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: false
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: absent
+- name: sagemaker-model-quality-job-definition-traffic-encryption-disabled
+  resource: aws.sagemaker-model-quality-job-definition
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP SageMaker.13
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker model quality job definitions without inter-container traffic
+
+    encryption. Same predicate as the data-quality control, on the
+
+    model-quality job-definition resource type.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: false
+    - type: value
+      key: NetworkConfig.EnableInterContainerTrafficEncryption
+      value: absent
+- name: sagemaker-model-private-registry-not-used
+  resource: aws.sagemaker-model
+  metadata:
+    severity: info
+    category: network-exposure
+    frameworks:
+    - FSBP SageMaker.16
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker models whose primary container does not pull its image from a
+
+    private registry inside a VPC (PrimaryContainer.ImageConfig absent, or
+
+    RepositoryAccessMode != Vpc). ImageConfig is unset unless a model
+
+    explicitly opts into a VPC registry, so the control describes the
+
+    platform default across every model rather than a per-model choice: it
+
+    ships as a METRIC, not a per-resource ticket queue (severity info).
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: PrimaryContainer.ImageConfig
+      value: absent
+    - type: value
+      key: PrimaryContainer.ImageConfig.RepositoryAccessMode
+      op: ne
+      value: Vpc
+- name: sagemaker-model-multi-container-private-registry-not-used
+  resource: aws.sagemaker-model
+  metadata:
+    severity: medium
+    category: network-exposure
+    frameworks:
+    - FSBP SageMaker.19
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'SageMaker models with a multi-container inference pipeline
+
+    (`Containers` list) where any container does not pull from a private
+
+    VPC registry. `Containers` is only present on multi-container models --
+
+    single-container models carry `PrimaryContainer` instead -- so the
+
+    presence check comes first and keeps this control from overlapping with
+
+    sagemaker-model-private-registry-not-used.
+
+    '
+  filters:
+  - type: value
+    key: Containers
+    value: present
+  - type: value
+    key: Containers[?ImageConfig.RepositoryAccessMode!='Vpc'] | [0]
+    value: present
+- name: sagemaker-notebook-allows-imdsv1
+  resource: aws.sagemaker-notebook
+  description: 'SageMaker notebook instances that still accept IMDSv1.
+
+
+    WHY AN SCP DOES NOT COVER THIS
+
+    ------------------------------
+
+    The usual preventive control for IMDSv1 denies ec2:RunInstances with
+
+    ec2:MetadataHttpTokens=optional and ec2:ModifyInstanceMetadataOptions.
+
+    Creating a notebook is sagemaker:CreateNotebookInstance, so an SCP written
+
+    that way stops nothing here: a notebook can still be created with
+
+    MinimumInstanceMetadataServiceVersion=1, and nothing flags it afterwards.
+
+    An organisation that decided IMDSv1 is unacceptable typically made that
+
+    decision enforceable for EC2 only.
+
+
+    A notebook is a worse place for the gap than an EC2 instance. It runs
+
+    user-authored code by definition, it holds an execution role that
+
+    typically reaches the data platform, and it is commonly created with
+
+    DirectInternetAccess enabled. IMDSv1 needs no token, so any SSRF or any
+
+    dependency in a cell can read the role credentials with a single GET.
+
+
+    WHY `absent` IS CHECKED TOO
+
+    ---------------------------
+
+    InstanceMetadataServiceConfiguration is missing entirely on notebooks
+
+    created before the setting existed, and its absence means v1 is accepted.
+
+    Matching only on the literal "1" would report the notebooks that were
+
+    configured badly on purpose while missing the older ones that were never
+
+    configured at all.
+
+
+    Note the version is a STRING in the API, not a number.
+
+
+    HOW TO READ A MATCH
+
+    -------------------
+
+    A stopped notebook still matches, and that is intentional: the IMDS
+
+    setting is the one recorded on the instance and applies again the moment
+
+    it starts. Stopped is not the same as harmless, but it is not the same as
+
+    exploitable either -- the finding is a configuration one and materialises
+
+    on start. A notebook that is IN SERVICE with this configuration deserves
+
+    to be triaged separately from one that has been stopped for years.
+
+    '
+  metadata:
+    severity: high
+    category: vulnerability
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 2.2.1
+    frequency: daily
+  filters:
+  - or:
+    - type: value
+      key: InstanceMetadataServiceConfiguration.MinimumInstanceMetadataServiceVersion
+      value: absent
+    - type: value
+      key: InstanceMetadataServiceConfiguration.MinimumInstanceMetadataServiceVersion
+      value: '1'

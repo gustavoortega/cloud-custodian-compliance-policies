@@ -1,0 +1,162 @@
+policies:
+- name: cognito-identity-pool-unauthenticated-access
+  resource: aws.identity-pool
+  metadata:
+    severity: medium
+    category: access-control
+    frameworks:
+    - 'SOX ITGC: Access'
+    - FSBP Cognito.2
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Cognito identity pools with AllowUnauthenticatedIdentities=true --
+
+    anonymous callers get temporary AWS credentials with no identity
+
+    provider in front of them.
+
+    '
+  filters:
+  - type: value
+    key: AllowUnauthenticatedIdentities
+    value: true
+- name: cognito-user-pool-weak-password-policy
+  resource: aws.user-pool
+  metadata:
+    severity: medium
+    category: access-control
+    frameworks:
+    - FSBP Cognito.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Cognito user pools whose password policy does not require at least 8
+
+    characters plus upper/lower/number/symbol, or allows temporary
+
+    passwords to live longer than 7 days. Each requirement is its own `or`
+
+    branch, so a pool missing a single one of them matches just like a pool
+
+    with every complexity requirement off.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: Policies.PasswordPolicy.MinimumLength
+      op: lt
+      value: 8
+    - type: value
+      key: Policies.PasswordPolicy.RequireUppercase
+      value: false
+    - type: value
+      key: Policies.PasswordPolicy.RequireLowercase
+      value: false
+    - type: value
+      key: Policies.PasswordPolicy.RequireNumbers
+      value: false
+    - type: value
+      key: Policies.PasswordPolicy.RequireSymbols
+      value: false
+    - type: value
+      key: Policies.PasswordPolicy.TemporaryPasswordValidityDays
+      op: gt
+      value: 7
+- name: cognito-user-pool-custom-auth-threat-protection-disabled
+  resource: aws.user-pool
+  metadata:
+    severity: medium
+    category: access-control
+    frameworks:
+    - FSBP Cognito.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Cognito user pools that DO use a custom-authentication Lambda flow
+
+    (DefineAuthChallenge configured) but don''t have threat protection
+
+    enforced (CustomAuthMode != ENFORCED) for that flow.
+
+
+    The two conditions are crossed deliberately. Checking CustomAuthMode
+
+    alone matches every pool that never touched the setting -- UserPoolAddOns
+
+    is absent until threat protection is configured once, and `op: ne` on an
+
+    absent key matches everything. That turns a feature nobody uses into a
+
+    fleet-wide false alarm. Requiring a DefineAuthChallenge Lambda first
+
+    scopes the control to the pools where custom-auth enforcement actually
+
+    means something, and it starts firing the day someone wires up custom
+
+    authentication without turning enforcement on.
+
+    '
+  filters:
+  - type: value
+    key: LambdaConfig.DefineAuthChallenge
+    value: present
+  - type: value
+    key: UserPoolAddOns.AdvancedSecurityAdditionalFlows.CustomAuthMode
+    op: ne
+    value: ENFORCED
+- name: cognito-user-pool-mfa-disabled
+  resource: aws.user-pool
+  metadata:
+    severity: medium
+    category: access-control
+    frameworks:
+    - 'SOX ITGC: Access'
+    - FSBP Cognito.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Cognito user pools configured for password-only sign-in
+
+    (AllowedFirstAuthFactors == [''PASSWORD''], i.e. not federated/passwordless,
+
+    where this control does not apply) with MFA off.
+
+
+    Kept on `daily` rather than `4h` deliberately: cadence is resolved per
+
+    resource type, so putting this control at 4h would drag every other
+
+    aws.user-pool policy (Cognito.3/.4/.6) onto the fast cadence too. MFA
+
+    posture on an existing pool does not shift hour to hour, so the extra
+
+    latency is an acceptable trade.
+
+    '
+  filters:
+  - type: value
+    key: Policies.SignInPolicy.AllowedFirstAuthFactors
+    value:
+    - PASSWORD
+  - type: value
+    key: MfaConfiguration
+    op: ne
+    value: 'ON'
+- name: cognito-user-pool-deletion-protection-disabled
+  resource: aws.user-pool
+  metadata:
+    severity: medium
+    category: resilience
+    frameworks:
+    - FSBP Cognito.6
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Cognito user pools without deletion protection: an accidental
+
+    `delete-user-pool` call would wipe every user with no confirmation
+
+    gate, and the directory is not recoverable afterwards.
+
+    '
+  filters:
+  - type: value
+    key: DeletionProtection
+    value: INACTIVE

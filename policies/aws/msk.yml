@@ -1,0 +1,87 @@
+policies:
+- name: msk-cluster-client-broker-plaintext
+  resource: aws.kafka
+  description: 'The MSK broker accepts client connections in plaintext (ClientBroker PLAINTEXT
+
+    or TLS_PLAINTEXT). Any workload that can reach the brokers over the network can
+
+    then read or inject messages on the bus without breaking any encryption, which
+
+    matters as soon as the topics carry business or personal data. Source: prowler
+
+    kafka_cluster_in_transit_encryption_enabled (high) / cloudsploit msk
+
+    mskClusterEncryptionInTransit.
+
+    '
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 4.2.1
+    - FSBP MSK.1
+    frequency: daily
+  filters:
+  - type: value
+    key: EncryptionInfo.EncryptionInTransit.ClientBroker
+    op: in
+    value:
+    - PLAINTEXT
+    - TLS_PLAINTEXT
+- name: msk-cluster-unauthenticated-access-enabled
+  resource: aws.kafka
+  description: 'The MSK cluster allows unauthenticated clients (Unauthenticated enabled and no
+
+    SASL/TLS required). Any pod or instance with network reach can produce and
+
+    consume topics, with no credential at all -- reading whatever the bus carries and
+
+    injecting forged events into whatever consumes it. Source: prowler
+
+    kafka_cluster_unrestricted_access_disabled (critical) / cloudsploit msk
+
+    mskClusterUnauthAccess.
+
+    '
+  metadata:
+    severity: critical
+    category: access-control
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 8.6
+    - 'SOX ITGC: Access'
+    - FSBP MSK.6
+    frequency: 4h
+  filters:
+  - type: value
+    key: ClientAuthentication.Unauthenticated.Enabled
+    value: true
+- name: msk-cluster-public-access-enabled
+  resource: aws.kafka
+  description: 'The MSK cluster has public access enabled (PublicAccess SERVICE_PROVIDED_EIPS):
+
+    the brokers become reachable from the internet. An internal event bus should
+
+    never be exposed, and combined with weak authentication it is a direct
+
+    exfiltration path. The POSITIVE value is matched so that serverless clusters --
+
+    where the key is absent entirely -- are not reported. Source: prowler
+
+    kafka_cluster_is_public (critical) / cloudsploit msk mskClusterPublicAccess.
+
+    '
+  metadata:
+    severity: critical
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 1.4.2
+    - 'SOX ITGC: Access'
+    - FSBP MSK.4
+    frequency: 4h
+  filters:
+  - type: value
+    key: BrokerNodeGroupInfo.ConnectivityInfo.PublicAccess.Type
+    value: SERVICE_PROVIDED_EIPS

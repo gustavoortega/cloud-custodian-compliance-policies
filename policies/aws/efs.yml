@@ -1,0 +1,146 @@
+policies:
+- name: efs-without-encryption-at-rest
+  resource: aws.efs
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - PCI 3.5.1
+    - FSBP EFS.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'EFS file systems with no encryption at rest. It cannot be enabled after
+
+    creation: it requires recreating and migrating, so the earlier it is caught the
+
+    cheaper it is.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: Encrypted
+      value: false
+    - type: value
+      key: Encrypted
+      value: absent
+- name: efs-shared-cross-account
+  resource: aws.efs
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  description: 'EFS file systems whose policy grants access outside the organisation.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+- name: efs-not-in-aws-backup-plan
+  resource: aws.efs
+  metadata:
+    severity: medium
+    category: resilience
+    frequency: daily
+    frameworks:
+    - FSBP EFS.2
+    owner_tag: resource-owner
+  description: 'EFS file systems that do NOT have 5 consecutive days of COMPLETED AWS
+
+    Backup recovery points -- the same `consecutive-aws-backups` idiom this
+
+    repo already uses for `aws-backup-dynamodb-table` and `aws-backup-rds`
+
+    in inventory_region.yaml, for consistency. Same caveat as those: a
+
+    filesystem younger than 5 days cannot pass and will appear here
+
+    regardless of its real backup posture, so check CreationTime before
+
+    triaging a row.
+
+
+    Note that FSBP EFS.2 (covered by an AWS Backup PLAN) and FSBP EFS.7 (the
+
+    native EFS "automatic backups" toggle, `describe_backup_policy`) tend to
+
+    move together: turning the native toggle on is what places a filesystem
+
+    into the implicit `aws/efs/automatic-backup-vault`, so a filesystem
+
+    covered by one is normally covered by the other. EFS.7 is not written as
+
+    its own policy -- see the notes at the end of this file.
+
+
+    An unprotected filesystem is a plain resilience gap rather than a
+
+    wrong-default artifact, so this stays a finding and is not downgraded to
+
+    a metric even where a large fraction of the estate matches.
+
+
+    The `not:` is the whole point -- `ConsecutiveAwsBackupsFilter.process`
+
+    KEEPS the resources whose backup history SATISFIES the requirement, so
+
+    the unwrapped filter returns the compliant set, not the finding.
+
+    '
+  filters:
+  - not:
+    - type: consecutive-aws-backups
+      count: 5
+      period: days
+      status: COMPLETED
+- name: efs-mount-target-in-public-ip-subnet
+  resource: aws.efs-mount-target
+  metadata:
+    severity: medium
+    category: exposure
+    frequency: daily
+    frameworks:
+    - FSBP EFS.6
+    owner_tag: resource-owner
+  description: 'EFS mount targets placed in a subnet that auto-assigns public IPv4
+
+    addresses on launch. The mount target itself never gets a public IP, but
+
+    an EC2 instance launched into that same subnet in order to mount the
+
+    filesystem would get one automatically, which is the attack-surface
+
+    signal FSBP EFS.6 is actually about.
+
+
+    Worth keeping even in an estate where it currently returns nothing:
+
+    default-to-public subnets are exactly the kind of thing a new
+
+    infrastructure-as-code module reintroduces without anyone noticing.
+
+
+    NOTE: per AWS''s own documentation this control is scheduled to be
+
+    REMOVED from the FSBP standard, moving to NIST 800-53 / NIST 800-171 /
+
+    PCI DSS v4.0.1 only. Decide whether to keep the `FSBP EFS.6` tag or
+
+    relabel it once that lands, so a dashboard does not keep scoring it
+
+    against an FSBP version that no longer includes it.
+
+    '
+  filters:
+  - type: subnet
+    key: MapPublicIpOnLaunch
+    value: true

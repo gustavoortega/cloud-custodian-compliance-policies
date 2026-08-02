@@ -1,0 +1,132 @@
+policies:
+- name: glue-data-catalog-encryption-disabled
+  resource: aws.glue-catalog
+  description: 'The account''s Glue Data Catalog does not encrypt metadata with KMS. The catalog
+
+    metadata describes where every dataset lives (schemas, S3 locations of the
+
+    underlying tables): it is the treasure map of the data lake. One resource per
+
+    account, so the volume is minimal. Source: prowler
+
+    glue_data_catalogs_metadata_encryption_enabled (medium) / cloudsploit glue
+
+    dataCatalogEncryptionEnabled.
+
+    '
+  conditions:
+  - type: value
+    key: account_id
+    op: in
+    value:
+    - '111111111111'
+    - '222222222222'
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 3.5.1
+    frequency: daily
+  filters:
+  - type: value
+    key: DataCatalogEncryptionSettings.EncryptionAtRest.CatalogEncryptionMode
+    value: DISABLED
+- name: glue-data-catalog-connection-password-unencrypted
+  resource: aws.glue-catalog
+  description: 'The Glue Data Catalog stores connection passwords (JDBC credentials to the
+
+    databases behind the catalog) without additional KMS encryption: anyone with
+
+    glue:GetConnection retrieves production database credentials in the clear. It is
+
+    database credential theft with a single API call. Source: prowler
+
+    glue_data_catalogs_connection_passwords_encryption_enabled (high) / cloudsploit
+
+    glue dataCatalogCmkEncrypted.
+
+    '
+  conditions:
+  - type: value
+    key: account_id
+    op: in
+    value:
+    - '111111111111'
+    - '222222222222'
+  metadata:
+    severity: high
+    category: secrets
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 8.6
+    - 'SOX ITGC: Access'
+    frequency: 4h
+  filters:
+  - or:
+    - type: value
+      key: DataCatalogEncryptionSettings.ConnectionPasswordEncryption.ReturnConnectionPasswordEncrypted
+      value: false
+    - type: value
+      key: DataCatalogEncryptionSettings.ConnectionPasswordEncryption.ReturnConnectionPasswordEncrypted
+      value: absent
+- name: glue-job-no-security-configuration
+  resource: aws.glue-job
+  description: 'Glue ETL job with no Security Configuration: what the job writes to S3 and its
+
+    CloudWatch logs (which may include sample rows of the data being processed)
+
+    leave without managed encryption. A job is created without a Security
+
+    Configuration by default, so this reads as a baseline for the owning team rather
+
+    than an urgent alert. Source: prowler
+
+    glue_etl_jobs_amazon_s3_encryption_enabled (high) +
+
+    glue_etl_jobs_cloudwatch_logs_encryption_enabled / cloudsploit glue
+
+    glueS3EncryptionEnabled.
+
+    '
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 3.5.1
+    frequency: daily
+  filters:
+  - type: value
+    key: SecurityConfiguration
+    value: absent
+- name: glue-job-unsupported-version
+  resource: aws.glue-job
+  metadata:
+    severity: medium
+    category: vulnerability
+    frameworks:
+    - FSBP Glue.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Glue Spark jobs on a GlueVersion below AWS''s minimum supported version
+
+    (3.0), or with GlueVersion missing entirely. The `absent` branch is not
+
+    decoration: FSBP''s own text treats a missing GlueVersion as a fail too, and
+
+    without it an absent key would evaluate to None and slip straight past the
+
+    `lt` comparison.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: GlueVersion
+      value: absent
+    - type: value
+      key: GlueVersion
+      op: lt
+      value: '3.0'
+      value_type: version

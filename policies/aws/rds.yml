@@ -1,0 +1,1052 @@
+policies:
+- name: rds-backup-retention-insufficient
+  resource: aws.rds
+  metadata:
+    severity: high
+    category: resilience
+    frameworks:
+    - PCI 12.10
+    - FSBP RDS.11
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances with a backup retention shorter than 7 days. A value of 0 means
+
+    automated backups are DISABLED, which is the case this control cares about
+
+    most: FSBP RDS.11 and PCI 12.10 both treat point-in-time recoverability of a
+
+    database as a first-line control, and it is also the practical defence
+
+    against ransomware.
+
+    '
+  filters:
+  - type: value
+    key: BackupRetentionPeriod
+    op: lt
+    value: 7
+- name: inventory-rds-public-endpoint
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: inventory
+    frameworks:
+    - CIS 2.3.3
+    - FSBP RDS.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances with a public endpoint enabled. Inventory, not a finding.
+
+
+    `PubliclyAccessible: true` means the instance has a public DNS name and
+
+    IP. It does NOT mean anything can reach it: that is decided by the
+
+    security group.
+
+
+    The trap this control exists to avoid: an instance can look exposed
+
+    because it shares a permissive security group that opens a database port
+
+    to the world, while the instance itself listens on a different engine''s
+
+    port entirely -- a group opening 3306 in front of a Postgres or SQL
+
+    Server instance leaves nothing reachable. Reporting the flag alone
+
+    therefore asserts an exposure the filter never proved.
+
+
+    The finding is `rds-internet-reachable`, which crosses the port against
+
+    the security group. This one stays as attack-surface inventory:
+
+    databases one security-group change away from being exposed are worth
+
+    knowing about, they are just not an incident.
+
+
+    Renamed from `rds-publicly-accessible`: the old name asserted exposure
+
+    that the filter never proved, which is what makes a dashboard built on it
+
+    untrustworthy.
+
+    '
+  filters:
+  - type: value
+    key: PubliclyAccessible
+    value: true
+- name: rds-internet-reachable
+  resource: aws.rds
+  metadata:
+    severity: critical
+    category: exposure
+    frameworks:
+    - CIS 2.3.3
+    - PCI 1.4.2
+    - 'SOX ITGC: Access'
+    - FSBP RDS.2
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'RDS instances actually reachable from the internet: public endpoint AND a
+
+    security group rule allowing 0.0.0.0/0 (or ::/0) ON THE INSTANCE''S OWN
+
+    PORT.
+
+
+    Uses the `internet-reachable` custom filter, because this cannot be
+
+    expressed declaratively: c7n''s `security-group` filter evaluates against
+
+    the security group and never sees the instance port. The closest
+
+    declarative approximation -- "public endpoint plus any world-open port" --
+
+    reports instances that are not reachable on the port they actually
+
+    listen on.
+
+
+    Findings are annotated with `c7n:ReachableVia`, stating which group and
+
+    rule expose the instance, so remediation does not require re-investigating.
+
+    '
+  filters:
+  - type: internet-reachable
+- name: rds-storage-unencrypted
+  resource: aws.rds
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - CIS 2.3.1
+    - PCI 3.5.1
+    - FSBP RDS.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances with no encryption at rest. They tend to be old instances, from
+
+    before encryption was the default.
+
+    '
+  filters:
+  - type: value
+    key: StorageEncrypted
+    value: false
+- name: rds-snapshot-shared-cross-account
+  resource: aws.rds-snapshot
+  metadata:
+    severity: high
+    category: exposure
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 7.2.1
+    - 'SOX ITGC: Access'
+    - FSBP RDS.1
+    frequency: 4h
+  description: 'RDS snapshots shared with accounts outside the organisation. It is the classic
+
+    vector for leaking a whole database. The whole organisation is whitelisted so
+
+    that sharing between your own accounts does not generate noise.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'
+- name: aws-backup-rds
+  resource: aws.rds
+  metadata:
+    frequency: daily
+  description: 'RDS instances that do NOT have 5 consecutive days of COMPLETED AWS Backup
+
+    recovery points.
+
+
+    A match is not proof the resource is unprotected. A resource created
+
+    less than 5 days ago cannot have accumulated 5 days of history and
+
+    matches regardless of its real backup posture, so check InstanceCreateTime
+
+    and the AWS Backup plan before escalating.
+
+
+    The `not:` is the whole point. `ConsecutiveAwsBackupsFilter.process`
+
+    keeps the resources whose backup history SATISFIES the requirement
+
+    (c7n/filters/backup.py), so without the negation this policy reports the
+
+    healthy resources and hides the gaps -- a failure mode that reads as a
+
+    clean result and can therefore go unnoticed indefinitely.
+
+    '
+  filters:
+  - not:
+    - type: consecutive-aws-backups
+      count: 5
+      period: days
+      status: COMPLETED
+- name: rds-snapshot-unencrypted-manual
+  resource: aws.rds-snapshot
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - FSBP RDS.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Manually created RDS instance snapshots that are not encrypted at rest.
+
+
+    Restricted to `SnapshotType: manual` on purpose: automated snapshots rotate
+
+    daily and simply mirror the encryption of their source instance, so including
+
+    them turns one instance''s already-known encryption gap (covered by
+
+    rds-storage-unencrypted in exposure-and-encryption.yaml) into one finding per
+
+    retained daily copy. A manual snapshot is a deliberate action someone took and
+
+    is far more likely to be shared or long-lived, so it is the signal worth a
+
+    ticket.
+
+    '
+  filters:
+  - type: value
+    key: SnapshotType
+    value: manual
+  - type: value
+    key: Encrypted
+    value: false
+- name: rds-cluster-snapshot-unencrypted-manual
+  resource: aws.rds-cluster-snapshot
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - FSBP RDS.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Manually created Aurora cluster snapshots that are not encrypted at rest. A
+
+    manual cluster snapshot inherits the encryption of the cluster it was taken
+
+    from, so what this really surfaces is an unencrypted cluster that someone
+
+    has now also copied.
+
+
+    Same manual-only reasoning as rds-snapshot-unencrypted-manual: automated
+
+    snapshots just replay the source cluster''s own StorageEncrypted setting
+
+    (already covered by RDS.27 below) once per retention day.
+
+    '
+  filters:
+  - type: value
+    key: SnapshotType
+    value: manual
+  - type: value
+    key: Encrypted
+    value: false
+- name: rds-instance-deletion-protection-disabled
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: resilience
+    frameworks:
+    - FSBP RDS.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances without deletion protection. DeletionProtection is off unless
+
+    somebody turns it on, so this control describes the shape of the whole fleet
+
+    rather than an anomaly inside it: METRIC, not a per-resource ticket queue.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: DeletionProtection
+      value: false
+    - type: value
+      key: DeletionProtection
+      value: absent
+- name: rds-instance-iam-auth-disabled
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: identity
+    frameworks:
+    - FSBP RDS.10
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances (mysql/postgres/aurora/mariadb engines, in a usable state)
+
+    without IAM database authentication. IAM database authentication is opt-in and
+
+    off by default, so this is a trend metric on password-auth adoption: METRIC,
+
+    not a per-resource ticket queue.
+
+
+    The engine and status filters are not decoration: IAM auth is only supported
+
+    on those engines, and an instance that is not in a usable state has no
+
+    meaningful answer for the flag.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: in
+    value:
+    - mysql
+    - postgres
+    - aurora
+    - aurora-mysql
+    - aurora-postgresql
+    - mariadb
+  - type: value
+    key: DBInstanceStatus
+    op: in
+    value:
+    - available
+    - backing-up
+    - storage-optimization
+    - storage-full
+  - type: value
+    key: IAMDatabaseAuthenticationEnabled
+    value: false
+- name: rds-cluster-iam-auth-disabled
+  resource: aws.rds-cluster
+  metadata:
+    severity: info
+    category: identity
+    frameworks:
+    - FSBP RDS.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora clusters without IAM database authentication. Same story as the
+
+    instance-level control: opt-in and off by default, so it is a trend metric.
+
+    METRIC, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: IAMDatabaseAuthenticationEnabled
+    value: false
+- name: rds-instance-auto-minor-version-upgrade-disabled
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: patching
+    frameworks:
+    - PCI 6.3.3
+    - FSBP RDS.13
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances without automatic minor version upgrades. Published as a
+
+    fleet-level metric rather than as a per-instance ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: AutoMinorVersionUpgrade
+    value: false
+- name: rds-cluster-not-multi-az
+  resource: aws.rds-cluster
+  metadata:
+    severity: info
+    category: resilience
+    frameworks:
+    - FSBP RDS.15
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora clusters not deployed across multiple Availability Zones. A cluster
+
+    reports MultiAZ false whenever all of its instances sit in a single
+
+    Availability Zone. Published as a fleet-level resilience metric rather than
+
+    as a per-cluster ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: MultiAZ
+    value: false
+- name: rds-cluster-copy-tags-to-snapshot-disabled
+  resource: aws.rds-cluster
+  metadata:
+    severity: info
+    category: inventory
+    frameworks:
+    - FSBP RDS.16
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora clusters not configured to copy tags to their snapshots. This is the
+
+    AWS default, a tagging/inventory hygiene gap rather than an anomaly: METRIC,
+
+    not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: CopyTagsToSnapshot
+    value: false
+- name: rds-instance-copy-tags-to-snapshot-disabled
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: inventory
+    frameworks:
+    - FSBP RDS.17
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS instances not configured to copy tags to their snapshots. Same
+
+    tagging-hygiene default as the cluster-level control: METRIC, not a
+
+    per-resource ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: CopyTagsToSnapshot
+    value: false
+- name: rds-event-subscription-cluster-incomplete
+  resource: aws.rds-subscription
+  metadata:
+    severity: info
+    category: monitoring
+    frameworks:
+    - FSBP RDS.19
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS event subscriptions for DB clusters (SourceType db-cluster) that don''t
+
+    cover "maintenance" and "failure".
+
+
+    AWS''s own text for this control says "the control passes if there are no
+
+    existing event subscriptions". A c7n policy over existing resources gets that
+
+    same vacuous pass for free, since it cannot flag a subscription that is not
+
+    there -- so an account with no cluster-scoped subscription at all reports
+
+    nothing here, and the policy only fires on one that exists and is
+
+    misconfigured.
+
+    '
+  filters:
+  - type: value
+    key: SourceType
+    value: db-cluster
+  - or:
+    - type: value
+      key: Enabled
+      value: false
+    - not:
+      - and:
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: maintenance
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: failure
+- name: rds-event-subscription-instance-incomplete
+  resource: aws.rds-subscription
+  metadata:
+    severity: info
+    category: monitoring
+    frameworks:
+    - PCI 11.5.2
+    - FSBP RDS.20
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS event subscriptions for DB instances (SourceType db-instance) that don''t
+
+    cover "maintenance", "configuration change" and "failure". A subscription that
+
+    exists but omits any one of the three is a fail: the missing category is
+
+    exactly the notification nobody ever receives. Same vacuous-pass shape as
+
+    RDS.19 when no db-instance subscription exists at all.
+
+    '
+  filters:
+  - type: value
+    key: SourceType
+    value: db-instance
+  - or:
+    - type: value
+      key: Enabled
+      value: false
+    - not:
+      - and:
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: maintenance
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: configuration change
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: failure
+- name: rds-event-subscription-parameter-group-incomplete
+  resource: aws.rds-subscription
+  metadata:
+    severity: info
+    category: monitoring
+    frameworks:
+    - PCI 11.5.2
+    - FSBP RDS.21
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS event subscriptions for DB parameter groups (SourceType db-parameter-group)
+
+    that don''t cover "configuration change". Same vacuous-pass shape as RDS.19:
+
+    where no parameter-group-scoped subscription exists, nothing is reported.
+
+    Written to catch a misconfigured one.
+
+    '
+  filters:
+  - type: value
+    key: SourceType
+    value: db-parameter-group
+  - or:
+    - type: value
+      key: Enabled
+      value: false
+    - not:
+      - type: value
+        key: EventCategoriesList
+        op: contains
+        value: configuration change
+- name: rds-event-subscription-security-group-incomplete
+  resource: aws.rds-subscription
+  metadata:
+    severity: info
+    category: monitoring
+    frameworks:
+    - PCI 11.5.2
+    - FSBP RDS.22
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS event subscriptions for DB security groups (SourceType db-security-group)
+
+    that don''t cover "configuration change" and "failure". Same vacuous-pass shape
+
+    as RDS.19 and RDS.21. Written to catch a misconfigured one.
+
+    '
+  filters:
+  - type: value
+    key: SourceType
+    value: db-security-group
+  - or:
+    - type: value
+      key: Enabled
+      value: false
+    - not:
+      - and:
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: configuration change
+        - type: value
+          key: EventCategoriesList
+          op: contains
+          value: failure
+- name: rds-instance-using-default-engine-port
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: exposure
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Standalone RDS instances still listening on their engine''s well-known default
+
+    port. Aurora cluster members are excluded because the port is a cluster-level
+
+    setting there, so evaluating it per member instance answers the wrong
+
+    question.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: not-in
+    value:
+    - aurora
+    - aurora-mysql
+    - aurora-postgresql
+  - or:
+    - and:
+      - type: value
+        key: Engine
+        value: postgres
+      - type: value
+        key: DbInstancePort
+        value: 5432
+    - and:
+      - type: value
+        key: Engine
+        op: in
+        value:
+        - mysql
+        - mariadb
+      - type: value
+        key: DbInstancePort
+        value: 3306
+    - and:
+      - type: value
+        key: Engine
+        op: glob
+        value: sqlserver-*
+      - type: value
+        key: DbInstancePort
+        value: 1433
+- name: rds-cluster-default-admin-username
+  resource: aws.rds-cluster
+  metadata:
+    severity: medium
+    category: identity
+    frameworks:
+    - PCI 2.2.2
+    - FSBP RDS.24
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora clusters still using the AWS console''s suggested administrator username
+
+    for their engine (admin for aurora-mysql, postgres for aurora-postgresql).
+
+
+    Only those two literal values are checked, because only those two are what the
+
+    console pre-fills and therefore what an attacker guesses first. Any other
+
+    username, however common a local convention it is, is not the AWS-suggested
+
+    default and correctly does not trigger this control -- it would need its own
+
+    check if that convention is considered risky.
+
+    '
+  filters:
+  - or:
+    - and:
+      - type: value
+        key: Engine
+        value: aurora-mysql
+      - type: value
+        key: MasterUsername
+        value: admin
+    - and:
+      - type: value
+        key: Engine
+        value: aurora-postgresql
+      - type: value
+        key: MasterUsername
+        value: postgres
+- name: rds-instance-default-admin-username
+  resource: aws.rds
+  metadata:
+    severity: medium
+    category: identity
+    frameworks:
+    - PCI 2.2.2
+    - FSBP RDS.25
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Standalone RDS instances (excluding Aurora cluster members, which RDS.25
+
+    doesn''t evaluate) still using the AWS console''s suggested administrator
+
+    username: postgres for postgres, admin for mysql.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: not-in
+    value:
+    - aurora
+    - aurora-mysql
+    - aurora-postgresql
+  - or:
+    - and:
+      - type: value
+        key: Engine
+        value: postgres
+      - type: value
+        key: MasterUsername
+        value: postgres
+    - and:
+      - type: value
+        key: Engine
+        value: mysql
+      - type: value
+        key: MasterUsername
+        value: admin
+- name: rds-cluster-storage-unencrypted
+  resource: aws.rds-cluster
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora clusters with no storage encryption at rest. Unlike the instance-level
+
+    rds-storage-unencrypted control (exposure-and-encryption.yaml, FSBP RDS.3),
+
+    this evaluates the CLUSTER''s own StorageEncrypted flag rather than that of its
+
+    member instances -- for Aurora the cluster is where the storage actually
+
+    lives, so the two are not interchangeable.
+
+    '
+  filters:
+  - type: value
+    key: StorageEncrypted
+    value: false
+- name: rds-cluster-aurora-mysql-audit-log-disabled
+  resource: aws.rds-cluster
+  metadata:
+    severity: info
+    category: logging
+    frameworks:
+    - PCI 10.2.1
+    - FSBP RDS.34
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora MySQL (provisioned, not Serverless v1) clusters not publishing audit
+
+    logs to CloudWatch Logs. Exporting the audit log is opt-in and off by default,
+
+    so the control describes the estate rather than an anomaly inside it: METRIC,
+
+    not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    value: aurora-mysql
+  - type: value
+    key: EngineMode
+    value: provisioned
+  - not:
+    - type: value
+      key: EnabledCloudwatchLogsExports
+      op: contains
+      value: audit
+- name: rds-multi-az-cluster-auto-minor-version-upgrade-disabled
+  resource: aws.rds-cluster
+  metadata:
+    severity: medium
+    category: patching
+    frameworks:
+    - PCI 6.3.3
+    - FSBP RDS.35
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS Multi-AZ DB clusters (the mysql/postgres cluster deployment mode, NOT
+
+    Aurora) without automatic minor version upgrades. The Engine filter is what
+
+    separates the two: aws.rds-cluster returns Aurora clusters and Multi-AZ DB
+
+    clusters alike, and only the latter have Engine in {mysql, postgres}, so
+
+    without it this control would also evaluate Aurora clusters that RDS.35
+
+    does not cover.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: in
+    value:
+    - mysql
+    - postgres
+  - type: value
+    key: AutoMinorVersionUpgrade
+    value: false
+- name: rds-postgres-instance-cloudwatch-logs-disabled
+  resource: aws.rds
+  metadata:
+    severity: info
+    category: logging
+    frameworks:
+    - PCI 10.4.2
+    - FSBP RDS.36
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS for PostgreSQL (non-Aurora) instances not publishing postgresql logs to
+
+    CloudWatch. Log export is opt-in and off by default: METRIC, not a
+
+    per-resource ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    value: postgres
+  - not:
+    - type: value
+      key: EnabledCloudwatchLogsExports
+      op: contains
+      value: postgresql
+- name: rds-cluster-aurora-postgresql-cloudwatch-logs-disabled
+  resource: aws.rds-cluster
+  metadata:
+    severity: info
+    category: logging
+    frameworks:
+    - PCI 10.4.2
+    - FSBP RDS.37
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora PostgreSQL clusters not publishing postgresql logs to CloudWatch. Same
+
+    opt-in default as the instance-level control: METRIC, not a per-resource
+
+    ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    value: aurora-postgresql
+  - not:
+    - type: value
+      key: EnabledCloudwatchLogsExports
+      op: contains
+      value: postgresql
+- name: rds-sqlserver-instance-cloudwatch-logs-disabled
+  resource: aws.rds
+  metadata:
+    severity: medium
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS for SQL Server instances not publishing both "agent" and "error" logs to
+
+    CloudWatch. Both are required: the `not` wraps an `and`, so an instance that
+
+    exports only one of the two still fails, which is what the control asks for.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: glob
+    value: sqlserver-*
+  - not:
+    - and:
+      - type: value
+        key: EnabledCloudwatchLogsExports
+        op: contains
+        value: agent
+      - type: value
+        key: EnabledCloudwatchLogsExports
+        op: contains
+        value: error
+- name: rds-sqlserver-instance-not-encrypted-in-transit
+  resource: aws.rds
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS for SQL Server instances whose parameter group has rds.force_ssl disabled,
+
+    meaning connections to those instances are not required to use TLS. Note that
+
+    the setting lives on the parameter group, not the instance, so a single
+
+    unmodified default group puts every instance attached to it in this result at
+
+    once.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: glob
+    value: sqlserver-*
+  - type: db-parameter
+    key: rds.force_ssl
+    value: false
+- name: rds-mariadb-instance-cloudwatch-logs-disabled
+  resource: aws.rds
+  metadata:
+    severity: medium
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS for MariaDB instances not publishing audit/error/general/slowquery logs
+
+    to CloudWatch. Both categories are required: the `not` wraps an `and`, so an
+
+    instance exporting only one of the two still fails.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    value: mariadb
+  - not:
+    - and:
+      - type: value
+        key: EnabledCloudwatchLogsExports
+        op: contains
+        value: audit
+      - type: value
+        key: EnabledCloudwatchLogsExports
+        op: contains
+        value: error
+- name: rds-mariadb-instance-not-encrypted-in-transit
+  resource: aws.rds
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS for MariaDB instances (version 10.5+) whose parameter group has
+
+    require_secure_transport disabled, meaning connections to those instances are
+
+    not required to use TLS. As with the SQL Server equivalent, the setting lives
+
+    on the parameter group and not on the instance.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    value: mariadb
+  - type: db-parameter
+    key: require_secure_transport
+    value: false
+- name: rds-proxy-tls-not-required
+  resource: aws.rds-proxy
+  metadata:
+    severity: medium
+    category: encryption
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'RDS Proxies that don''t require TLS between the proxy and the underlying RDS
+
+    instance. RequireTLS is a proxy-level flag, so this is independent of whatever
+
+    the target instance''s own parameter group enforces.
+
+    '
+  filters:
+  - type: value
+    key: RequireTLS
+    value: false
+- name: rds-cluster-aurora-mysql-audit-logging-param-disabled
+  resource: aws.rds-cluster
+  metadata:
+    severity: info
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Aurora MySQL clusters whose parameter group leaves server_audit_logging at
+
+    its engine default (disabled). The engine default is off, so this describes
+
+    the estate rather than an anomaly inside it: METRIC, not a per-resource
+
+    ticket queue. RDS.34 above already covers the CloudWatch-export side of
+
+    Aurora MySQL audit logging as the actionable signal.
+
+
+    `server_audit_logging` never carries an explicit ParameterValue when left at
+
+    the engine default, so c7n''s own db-cluster-parameter filter builds its
+
+    per-resource dict from entries that DO have a ParameterValue and silently
+
+    drops the rest -- an unset parameter is indistinguishable from an absent key
+
+    once it reaches the value filter. The `or: [value: false, value: absent]`
+
+    guard is required for the same reason it is required for any other
+
+    encryption/flag control in this repo: without it, "never configured" reads
+
+    as "the safe value", which is backwards for a parameter whose engine default
+
+    is off.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    value: aurora-mysql
+  - or:
+    - type: db-cluster-parameter
+      key: server_audit_logging
+      value: false
+    - type: db-cluster-parameter
+      key: server_audit_logging
+      value: absent
+- name: rds-security-groups
+  resource: rds
+  metadata:
+    frequency: daily
+  description: 'Inventory of RDS instances with at least one VPC security group
+
+    attached (VpcSecurityGroups is not empty). Instances with no
+
+    security group listed -- a rare, incomplete-state case -- are
+
+    excluded. Base list other RDS network checks join against.
+
+    '
+  filters:
+  - type: value
+    key: VpcSecurityGroups
+    value: not-null

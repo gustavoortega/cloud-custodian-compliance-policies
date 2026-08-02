@@ -1,0 +1,97 @@
+policies:
+- name: lambda-invocation-errors
+  resource: lambda
+  description: 'Lambda functions with at least one invocation error in the trailing
+
+    ~4 hour window (Errors metric > 0), unless tagged
+
+    Custodian_Lambda_Error_Exclude. One error in the window is enough to
+
+    match, so this says the function errored recently and warrants a look,
+
+    not that it is failing continuously.
+
+    '
+  filters:
+  - type: metrics
+    name: Errors
+    days: 0.17
+    period: 14700
+    statistics: Sum
+    op: greater-than
+    value: 0
+  - not:
+    - tag:Custodian_Lambda_Error_Exclude: present
+- name: lambda-with-public-url
+  resource: aws.lambda
+  metadata:
+    frequency: 4h
+  description: 'Lambda functions with a Function URL configured with AuthType NONE.
+
+    Anyone with the URL can invoke the function directly over HTTPS,
+
+    with no IAM authentication in front of it.
+
+    '
+  filters:
+  - type: url-config
+    key: AuthType
+    op: eq
+    value: NONE
+- name: lambda-runtime-deprecated
+  resource: aws.lambda
+  metadata:
+    severity: medium
+    category: vulnerability
+    frameworks:
+    - FSBP Lambda.2
+    - PCI 12.3.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Lambda functions running a runtime AWS Lambda no longer supports for
+
+    security updates (python3.8/3.9, every pre-nodejs20.x Node build,
+
+    python2.7, etc). Kept at `medium` to match FSBP''s own severity.
+
+
+    Excludes functions with `PackageType: Image` -- container-image functions
+
+    manage their own base image and aren''t evaluated by this control. The
+
+    supported-runtime list below is AWS''s current one as of this write; it
+
+    moves forward over time, so the finding count drifts upward even with
+
+    zero new deploys unless functions are proactively upgraded, which makes
+
+    this a trend to track rather than a per-function ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: PackageType
+    op: ne
+    value: Image
+  - not:
+    - type: value
+      key: Runtime
+      op: in
+      value:
+      - dotnet10
+      - dotnet8
+      - java25
+      - java21
+      - java17
+      - java11
+      - java8.al2
+      - nodejs24.x
+      - nodejs22.x
+      - python3.14
+      - python3.13
+      - python3.12
+      - python3.11
+      - python3.10
+      - ruby4.0
+      - ruby3.4
+      - ruby3.3

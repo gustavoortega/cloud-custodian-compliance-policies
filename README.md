@@ -1,0 +1,125 @@
+# cloud-custodian-compliance-policies
+
+325 Cloud Custodian policies for AWS, each citing the compliance control it covers.
+
+```
+git clone https://github.com/gustavoortega/cloud-custodian-compliance-policies
+cd cloud-custodian-compliance-policies
+python -m venv .venv && .venv/bin/pip install c7n c7n-kit pytest
+.venv/bin/pytest -q                                  # 217 tests, no AWS account
+.venv/bin/c7n-kit coverage catalogs/fsbp.txt policies/aws
+```
+
+```
+FSBP  229/369 controls (62%)
+catalog complete: yes
+orphans: none
+```
+
+Nothing above needs credentials, a network connection, or an AWS account.
+
+## Why this exists
+
+Cloud Custodian's own documentation ships 109 example policies across 43 files, and not one of them cites a control from any compliance framework. A GitHub code search for `FSBP` or `"Foundational Security"` in `cloud-custodian/cloud-custodian` returns zero hits.
+
+Somebody asked upstream whether c7n could check a compliance framework out of the box, HIPAA in that case: [Discussion #7426](https://github.com/orgs/cloud-custodian/discussions/7426), 15 October 2021, *"Do I need to write my own policies or I can run it out of the box like Prowler?"* Still zero comments.
+
+The community collections do not fill the gap either. The largest has 184 policies and maps them with a `# SOC2` comment in 17 files. The most starred has 126 and no mapping at all. The most rigorous prior art in public is a `comment:` field carrying CIS numbers, written in 2019.
+
+So this is not "another policy collection". It is the compliance mapping, in a form a machine can check.
+
+## What is in it
+
+| | |
+|---|---|
+| Policies | 325, in 42 files, one per AWS service |
+| FSBP | 229 of 369 controls, catalogue complete, zero orphans |
+| PCI DSS v4.0 | 20 controls cited, catalogue incomplete, count only |
+| CIS AWS | 13 controls cited, catalogue incomplete, count only |
+| SOX ITGC | 3 controls cited |
+| Tests | 217, offline |
+
+The mapping lives inside the policy:
+
+```yaml
+- name: rds-storage-unencrypted
+  resource: aws.rds
+  metadata:
+    severity: high
+    category: encryption
+    frameworks: ['FSBP RDS.3', 'PCI 3.5.1']
+    frequency: daily
+  filters:
+    - or:
+      - type: value
+        key: StorageEncrypted
+        value: false
+      - type: value
+        key: StorageEncrypted
+        value: absent
+```
+
+`metadata` is a first-class key in stock Cloud Custodian: it is in `allowed_policy_keys` in `c7n/structure.py`, typed as a free-form object in `c7n/schema.py`, and it survives the loader into `policy.data['metadata']` and out into the run's output. **This needs no fork.** It runs on `pip install c7n`.
+
+## Three things you cannot do with Cloud Custodian alone
+
+**Select by framework control.** `PolicyCollection.filter` matches the policy *name* with `fnmatch` and nothing else, and `c7n-org -l` matches a flat list of string tags. There is no way in stock c7n to say "run everything that covers PCI DSS 4.0". Here the metadata makes it a query.
+
+**Get a coverage number with a denominator.** `custodian` has no concept of a framework, a control ID or a severity. `c7n-kit coverage` prints `229/369` and fails the build when a policy cites a control that does not exist.
+
+**Test a policy against a resource shape your account does not have.** `custodian run --dryrun` still calls AWS to enumerate, so a policy is only ever tested against whatever happens to be in your account today. The 217 tests here run c7n's real filter engine against resources typed by hand, including the case that breaks everyone:
+
+```python
+{'DBInstanceIdentifier': 'c'}          # StorageEncrypted never came back
+```
+
+In Cloud Custodian a missing key evaluates to `None`, and `None == False` is `False`. A `value: false` filter lets that resource through as compliant. The tests assert what each policy *actually* does with it, not what it should.
+
+## Before you run this against your accounts
+
+**Replace the placeholder account lists.** Several policies use `cross-account` and `not-in`, which deny by omission: they treat anything not on the allow-list as external. The lists here ship as `'111111111111'`, `'222222222222'`, `'333333333333'` with a `REPLACE` comment on each. Until you put your own account IDs in, those policies will report every grant to your own sibling accounts as an external grant. Noisy, never the other way round, but you will not like the first run.
+
+Same for `o-exampleorg1` in `whitelist_orgids`, and for the `tag:external-waf` exclusion in the ALB policy, which expects a tag your organisation probably does not use.
+
+**Cadence is declared per policy and resolved per resource type.** `c7n-org` enumerates once per policy file and then applies every filter to that list, so what drives the cost of a run is the number of enumerations, not the number of rules. `c7n-kit cadence policies/aws` prints the resolved frequency per type and, more usefully, which single policy promoted a type to the expensive lane:
+
+```
+aws.hostedzone           promoted by: ['inventory-hosted-zones']
+```
+
+Move that one rule and the whole type drops to daily.
+
+**The incomplete catalogues report orphans that are not orphans.** `catalogs/pci-4.0.txt` holds 125 of PCI DSS v4.0's requirements, so a control that genuinely exists but is missing from the file is reported as cited-and-nonexistent. The file declares `complete: no` and the tooling prints it on every run. CI gates orphans on FSBP only, which is the one catalogue that is complete.
+
+## What is not here
+
+The 29 policies that only enumerate resources without filtering anything. They exist in the fleet this came from to feed a downstream index, they cite no control, and shipping them would inflate the catalogue with rows that are not findings.
+
+Policies whose logic depends on a specific organisation's tag-based exception model. They cannot be adapted by find-and-replace.
+
+Actions. Every policy here detects; none of them remediates. Adding `actions:` to a rule you have not watched for a few weeks is how you find out what it really matches.
+
+## Layout
+
+```
+policies/aws/<service>.yml    one file per AWS service, 42 of them
+catalogs/                     framework control IDs, each declaring whether it is complete
+extensions/c7n_pack/            10 custom filters for controls stock c7n cannot express
+tests/aws/test_<service>.py   217 behavioural tests, offline
+```
+
+Grouping is by AWS service and not by framework, because c7n-org enumerates once per policy file: split one service across two files and you enumerate it twice per run. Grouping by framework forces the same control to be redeclared once per framework version, which is what Steampipe pays for its nine live CIS versions.
+
+## Contributing a policy
+
+1. Append it to `policies/aws/<service>.yml`. Never a new file for an existing service.
+2. Fill `severity`, `category`, `frameworks`, `frequency`. The control IDs you cite must exist in `catalogs/`. If a real control is genuinely missing from the catalogue, the same PR adds it with its source URL in the file header.
+3. Add a test in `tests/aws/test_<service>.py` with three cases: one resource that matches, one that does not, and one where the key is absent.
+
+CI runs `custodian validate`, the metadata schema, the orphan gate, and the suite, across three c7n versions. It holds no secrets: a policy repo whose CI cannot be used to pivot into an AWS account.
+
+## Licence
+
+Apache 2.0, the same as Cloud Custodian.
+
+Maintained in a personal capacity. Best effort, no SLA.

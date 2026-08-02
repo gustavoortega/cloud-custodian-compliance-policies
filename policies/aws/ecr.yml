@@ -1,0 +1,119 @@
+policies:
+- name: ecr-repository-scanning-disabled
+  resource: aws.ecr
+  metadata:
+    severity: info
+    category: vulnerability
+    frameworks:
+    - PCI 6.2.3
+    - FSBP ECR.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Private ECR repositories with no scan-on-push configured (continuous
+
+    scanning is account-wide via Inspector and isn''t captured per-repository
+
+    here; scanOnPush is the per-repository signal FSBP''s control checks).
+
+    scanOnPush is off by default on a new repository, so the condition
+
+    describes the registry as a whole rather than an anomaly inside it:
+
+    METRIC of scanning adoption, not a per-repository ticket queue.
+
+    [FSBP ECR.1]
+
+    '
+  filters:
+  - type: value
+    key: imageScanningConfiguration.scanOnPush
+    value: false
+- name: ecr-repository-tag-mutable
+  resource: aws.ecr
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP ECR.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Private ECR repositories where tag immutability is not set to IMMUTABLE (a
+
+    mutable `:latest` or version tag lets the same tag point at a different image
+
+    over time, which breaks the guarantee that a deployed tag is a known image).
+
+
+    Note when triaging: the field has three possible values, not two. Besides
+
+    MUTABLE there is IMMUTABLE_WITH_EXCLUSION, a partial policy that still
+
+    fails FSBP''s strict "value must be IMMUTABLE" check -- so a match does not
+
+    necessarily mean the repository has no protection at all. MUTABLE is the
+
+    AWS default, which is why this rides as a METRIC and not a per-repository
+
+    ticket queue.
+
+    [FSBP ECR.2]
+
+    '
+  filters:
+  - type: value
+    key: imageTagMutability
+    op: ne
+    value: IMMUTABLE
+- name: ecr-repository-no-lifecycle-policy
+  resource: aws.ecr
+  metadata:
+    severity: info
+    category: hygiene
+    frameworks:
+    - FSBP ECR.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ECR repositories with zero lifecycle policy rules configured -- untagged and
+
+    superseded images accumulate forever and nothing ever expires them. A
+
+    repository ships with no lifecycle policy by default, so this is a METRIC
+
+    of lifecycle adoption, not a per-repository ticket queue.
+
+
+    Uses the native `lifecycle-rule` filter (`state: false`, no `match`), which
+
+    calls GetLifecyclePolicy per repository and matches when the repository has
+
+    no rules at all -- exactly FSBP''s own condition ("at least one lifecycle
+
+    policy configured").
+
+    [FSBP ECR.3]
+
+    '
+  filters:
+  - type: lifecycle-rule
+    state: false
+- name: detect-shared-cross-ecr-repository
+  resource: aws.ecr
+  metadata:
+    frequency: 4h
+  description: 'ECR repositories whose resource policy grants pull/push access to an
+
+    AWS account outside the organization''s own accounts. An external
+
+    account with access to a shared repository can pull production
+
+    container images -- and, depending on the actions granted, push a
+
+    poisoned replacement.
+
+    '
+  filters:
+  - type: cross-account
+    whitelist:
+    - '111111111111'
+    - '222222222222'
+    - '333333333333'

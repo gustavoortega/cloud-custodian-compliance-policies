@@ -1,0 +1,77 @@
+policies:
+- name: cloudformation-stack-termination-protection-disabled
+  resource: aws.cfn
+  metadata:
+    severity: info
+    category: governance
+    frameworks:
+    - FSBP CloudFormation.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Root CloudFormation stacks with termination protection OFF (nested
+
+    stacks excluded -- see file section header). Any principal with
+
+    cloudformation:DeleteStack can remove such a stack with no extra
+
+    confirmation. Off is the CloudFormation default, so unless an estate has
+
+    deliberately turned it on this control describes every stack rather than
+
+    an anomaly among them: a METRIC, not a per-resource ticket queue.
+
+
+    `EnableTerminationProtection` is always present as a real boolean on
+
+    every stack the API returns, so this is a direct `value: false` check
+
+    with no absence guard needed.
+
+    '
+  filters:
+  - type: value
+    key: ParentId
+    value: absent
+  - type: value
+    key: EnableTerminationProtection
+    value: false
+- name: cloudformation-stack-without-service-role
+  resource: aws.cfn
+  metadata:
+    severity: info
+    category: governance
+    frameworks:
+    - FSBP CloudFormation.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Root CloudFormation stacks with no service role associated
+
+    (`RoleARN` absent; nested stacks excluded -- see file section header).
+
+    Without a service role, CloudFormation acts with the permissions of
+
+    whoever calls UpdateStack/CreateStack, so the update path is only as
+
+    constrained as the calling principal''s own IAM policy -- exactly what a
+
+    service role exists to separate. Attaching one is the exception rather
+
+    than the norm in most estates, which makes this a METRIC rather than a
+
+    per-resource ticket queue.
+
+
+    `RoleARN` is genuinely absent (not an empty string) on stacks with no
+
+    service role, which is why this is an absence check and not a `ne`/
+
+    `false` comparison.
+
+    '
+  filters:
+  - type: value
+    key: ParentId
+    value: absent
+  - type: value
+    key: RoleARN
+    value: absent

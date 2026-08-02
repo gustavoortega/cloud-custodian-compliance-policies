@@ -1,0 +1,144 @@
+policies:
+- name: route53-public-zone-query-logging-disabled
+  resource: aws.hostedzone
+  metadata:
+    severity: info
+    category: logging
+    owner_tag: resource-owner
+    frequency: daily
+    frameworks:
+    - PCI 10.4.2
+    - FSBP Route53.2
+  description: 'Public Route 53 hosted zones with no DNS query logging configured (private
+
+    zones are out of scope for this control by definition, and the
+
+    `query-logging-enabled` filter already restricts itself to public ones).
+
+    Query logging is opt-in per zone, so this control describes the whole
+
+    public-zone population: a METRIC, not a per-zone ticket queue. Enabling
+
+    CloudWatch query logging across a large zone population is a cost and
+
+    signal-to-noise decision on its own, which is why it is tracked as a trend.
+
+
+    aws.hostedzone has no other active policy anywhere in this repo today, so
+
+    this policy alone decides the resource type''s cadence: at `daily` the zone
+
+    list is enumerated once a day instead of on every 4-hourly run, which
+
+    matters whenever that list is large.
+
+    '
+  filters:
+  - type: query-logging-enabled
+    state: false
+- name: r53domain-transfer-lock-disabled
+  resource: aws.r53domain
+  metadata:
+    severity: critical
+    category: brand
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Registered domains with no transfer lock. Without that lock, whoever compromises
+
+    the registrar account or the administrative contact''s mailbox can transfer the
+
+    domain to another registrar and keep it.
+
+
+    That is the worst case for anything that depends on the domain: the domain is
+
+    lost, and with it the mail, the certificates and the trust of everyone who
+
+    resolves it. The fix is one click and has no operational downside.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: value
+    key: TransferLock
+    value: false
+- name: r53domain-autorenew-disabled
+  resource: aws.r53domain
+  metadata:
+    severity: critical
+    category: brand
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'Registered domains with automatic renewal turned off. A domain that expires goes
+
+    off the air and becomes available for a third party to register.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: value
+    key: AutoRenew
+    value: false
+- name: r53domain-expiring-90d
+  resource: aws.r53domain
+  metadata:
+    severity: high
+    category: brand
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Domains expiring within the next 90 days. This is the safety net in case
+
+    automatic renewal fails: it leaves time to intervene by hand before the domain
+
+    is lost.
+
+    '
+  conditions:
+  - type: value
+    key: region
+    op: eq
+    value: us-east-1
+  filters:
+  - type: value
+    key: Expiry
+    value_type: expiration
+    op: lt
+    value: 90
+- name: inventory-hosted-zones
+  resource: aws.hostedzone
+  description: 'Inventory of every public Route 53 hosted zone in the account
+
+    (Config.PrivateZone is false). Private hosted zones, which only
+
+    resolve inside a VPC, are excluded.
+
+    '
+  filters:
+  - type: value
+    key: Config.PrivateZone
+    value: false
+- name: inventory-hosted-zones-records
+  resource: aws.rrset
+  description: 'Inventory of every A, CNAME, and MX record across the account''s
+
+    hosted zones. Other record types (TXT, NS, SOA, etc.) are not
+
+    included.
+
+    '
+  filters:
+  - type: value
+    key: Type
+    op: in
+    value:
+    - A
+    - CNAME
+    - MX

@@ -1,0 +1,54 @@
+policies:
+- name: appsync-field-level-logging-disabled
+  resource: aws.graphql-api
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - PCI 10.4.2
+    - FSBP AppSync.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'AppSync GraphQL APIs with field-level logging off. An API that never
+
+    configured logging has no `logConfig` block at all in the raw response,
+
+    so the filter needs the `absent` branch as well as the explicit NONE
+
+    level -- checking `fieldLogLevel` alone would miss the common case.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: logConfig
+      value: absent
+    - type: value
+      key: logConfig.fieldLogLevel
+      value: NONE
+    - type: value
+      key: logConfig.fieldLogLevel
+      value: absent
+- name: appsync-api-key-authentication
+  resource: aws.graphql-api
+  metadata:
+    severity: high
+    category: access-control
+    frameworks:
+    - 'SOX ITGC: Access'
+    - FSBP AppSync.5
+    owner_tag: resource-owner
+    frequency: 4h
+  description: 'AppSync GraphQL APIs authenticated with an API key instead of IAM,
+
+    Cognito, OIDC or Lambda auth. An API key is a hard-coded, widely
+
+    shareable credential in front of an endpoint that is reachable from the
+
+    internet, so this runs at 4h rather than daily.
+
+    '
+  filters:
+  - type: value
+    key: authenticationType
+    value: API_KEY

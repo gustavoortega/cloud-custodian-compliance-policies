@@ -1,0 +1,47 @@
+policies:
+- name: transfer-server-ftp-protocol-enabled
+  resource: aws.transfer-server
+  metadata:
+    severity: medium
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP Transfer.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'AWS Transfer Family servers accepting plain FTP (unencrypted) instead
+
+    of SFTP/FTPS/AS2. A server''s protocol list is an explicit, deliberate
+
+    choice, so this is worth keeping even when nothing matches: it catches
+
+    the day FTP is silently added to an existing server.
+
+    '
+  filters:
+  - type: value
+    key: Protocols
+    op: contains
+    value: FTP
+- name: transfer-connector-logging-disabled
+  resource: aws.transfer-connector
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP Transfer.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'AWS Transfer Family connectors without a CloudWatch logging role
+
+    configured. A connector with no LoggingRole leaves no record of the
+
+    file transfers it performed, so the evidence is unrecoverable after the
+
+    fact.
+
+    '
+  filters:
+  - type: value
+    key: LoggingRole
+    value: absent

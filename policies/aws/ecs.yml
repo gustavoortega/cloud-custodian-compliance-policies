@@ -1,0 +1,294 @@
+policies:
+- name: ecs-task-definition-shares-host-pid-namespace
+  resource: aws.ecs-task-definition
+  metadata:
+    severity: high
+    category: hardening
+    frameworks:
+    - FSBP ECS.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Task definitions that share the host''s process ID namespace
+
+    (`pidMode: host`) with their containers, letting a container see and
+
+    signal every process on the underlying instance -- including ones
+
+    belonging to other tasks. `pidMode` is an optional field: when it is not
+
+    set the task keeps the default namespace isolation, which is the secure
+
+    state, so the filter is written as a positive match on `host` and an
+
+    absent key is correctly read as compliant rather than as a finding.
+
+    '
+  filters:
+  - type: latest-revision
+  - type: value
+    key: pidMode
+    value: host
+- name: ecs-task-definition-privileged-container
+  resource: aws.ecs-task-definition
+  metadata:
+    severity: high
+    category: access-control
+    frameworks:
+    - FSBP ECS.4
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Task definitions with at least one container running `privileged:
+
+    true`, which grants it root-equivalent access to the host container
+
+    instance. `privileged` is an optional field and a container definition
+
+    that never sets it comes back without the key rather than with `false`;
+
+    the JMESPath positive match on `true` reads that absence as compliant,
+
+    which is the correct direction here. Written the other way round (an
+
+    `op: ne` against `true`) it would report every container that simply
+
+    omits the field.
+
+    '
+  filters:
+  - type: latest-revision
+  - type: value
+    key: length(containerDefinitions[?privileged==`true`])
+    op: greater-than
+    value: 0
+- name: ecs-task-definition-writable-root-filesystem
+  resource: aws.ecs-task-definition
+  metadata:
+    severity: info
+    category: access-control
+    frameworks:
+    - FSBP ECS.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Inventory of task definitions where at least one Linux container can
+
+    write to its own root filesystem (`readonlyRootFilesystem` is `false`
+
+    or, per FSBP''s own definition of this control, simply not set).
+
+    Leaving the field unset is the ECS default, so this control describes
+
+    the whole task-definition population rather than an anomaly inside it:
+
+    it is a METRIC, not a per-resource ticket queue, which is why it is
+
+    kept at `info` and out of the findings table. One row per family here
+
+    would bury every other ECS control next to it.
+
+
+    The exclusion for `WINDOWS_SERVER` comes straight from FSBP''s own text
+
+    (`readonlyRootFilesystem` is not a supported parameter on Windows task
+
+    definitions), not from anything measured here.
+
+    '
+  filters:
+  - type: latest-revision
+  - type: value
+    key: runtimePlatform.operatingSystemFamily
+    op: ne
+    value: WINDOWS_SERVER
+  - type: value
+    key: length(containerDefinitions[?readonlyRootFilesystem!=`true`])
+    op: greater-than
+    value: 0
+- name: ecs-task-definition-secret-in-environment
+  resource: aws.ecs-task-definition
+  metadata:
+    severity: high
+    category: secrets
+    frameworks:
+    - FSBP ECS.8
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Task definitions with a container environment variable named
+
+    `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` or `ECS_ENGINE_AUTH_DATA`
+
+    -- the exact three keys FSBP checks, chosen because plaintext
+
+    credentials there are visible to anyone who can call
+
+    DescribeTaskDefinition, with no IAM boundary narrower than that. This
+
+    control does not see secrets passed by other means (an S3-sourced env
+
+    file, or a value baked into the image) -- FSBP''s own scope is the same.
+
+    '
+  filters:
+  - type: latest-revision
+  - type: value
+    key: length(containerDefinitions[].environment[] | [?contains(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
+      'ECS_ENGINE_AUTH_DATA'], name)])
+    op: greater-than
+    value: 0
+- name: ecs-task-definition-no-log-configuration
+  resource: aws.ecs-task-definition
+  metadata:
+    severity: high
+    category: logging
+    frameworks:
+    - FSBP ECS.9
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Task definitions where at least one container has no `logConfiguration`
+
+    at all, or has one with `logDriver` unset -- no CloudWatch Logs, no
+
+    awsfirelens, nothing, so a compromised or crashing container leaves no
+
+    trace to investigate. The check is per container, not per family: the
+
+    JMESPath counts container definitions whose logConfiguration.logDriver
+
+    is null, so a family matches as soon as ONE of its containers is
+
+    missing a driver, even when the others are configured correctly. Read
+
+    the result at container level when triaging.
+
+    '
+  filters:
+  - type: latest-revision
+  - type: value
+    key: length(containerDefinitions[?logConfiguration.logDriver==null])
+    op: greater-than
+    value: 0
+- name: ecs-task-definition-root-user
+  resource: aws.ecs-task-definition
+  metadata:
+    severity: info
+    category: access-control
+    frameworks:
+    - FSBP ECS.20
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Inventory of task definitions where at least one Linux container runs
+
+    as root -- `user` unset (which is FSBP''s own definition of a failure
+
+    here, not this filter''s choice) or explicitly `root`/`0` (with or
+
+    without a trailing `:group`). Leaving `user` unset is the ECS default,
+
+    so this control describes the whole task-definition population rather
+
+    than an anomaly inside it: it is a METRIC, not a per-resource ticket
+
+    queue, kept at `info` and out of the findings table for the same reason
+
+    as the read-only-filesystem control above.
+
+
+    The `WINDOWS_SERVER` exclusion is FSBP''s own: Windows containers have a
+
+    different default administrative user and are covered by a separate
+
+    control (ECS.21), not written here.
+
+    '
+  filters:
+  - type: latest-revision
+  - type: value
+    key: runtimePlatform.operatingSystemFamily
+    op: ne
+    value: WINDOWS_SERVER
+  - type: value
+    key: length(containerDefinitions[?user==null || user=='root' || user=='0' || starts_with(user, 'root:')
+      || starts_with(user, '0:')])
+    op: greater-than
+    value: 0
+- name: detect-public-ecs
+  resource: aws.ecs-service
+  metadata:
+    frequency: 4h
+  description: 'ECS services running in awsvpc network mode with assignPublicIp set
+
+    to ENABLED -- each task gets a public IP address directly, bypassing
+
+    any load balancer or NAT sitting in front of it.
+
+    '
+  filters:
+  - type: value
+    key: networkConfiguration.awsvpcConfiguration.assignPublicIp
+    value: ENABLED
+- name: ecs-cluster-container-insights-disabled
+  resource: aws.ecs
+  metadata:
+    severity: medium
+    category: logging
+    frameworks:
+    - FSBP ECS.12
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ECS clusters without Container Insights enabled.
+
+
+    The setting only comes back from `describe_clusters` when `SETTINGS` is
+
+    requested in `include`. The JMESPath pulls the `containerInsights`
+
+    setting by name because `settings` is a bare list of `{name, value}`
+
+    pairs with no fixed key order; a cluster with no settings list at all
+
+    resolves to null, which correctly reads as "not enabled" -- matching
+
+    FSBP''s own definition.
+
+    '
+  filters:
+  - type: value
+    key: settings[?name == 'containerInsights'].value | [0]
+    op: not-in
+    value:
+    - enabled
+    - enhanced
+- name: ecs-service-fargate-platform-version-outdated
+  resource: aws.ecs-service
+  metadata:
+    severity: medium
+    category: vulnerability
+    frameworks:
+    - FSBP ECS.10
+    - PCI 6.3.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Fargate ECS services not pinned to the latest Fargate platform version.
+
+    A service on `platformVersion: LATEST` auto-tracks AWS''s current version
+
+    and is compliant by definition, so this only fires on a service pinned to
+
+    a stale numbered version (1.2.0, etc). The `launchType` filter is what
+
+    keeps EC2-launch-type services out, since platformVersion is meaningless
+
+    for them.
+
+    '
+  filters:
+  - type: value
+    key: launchType
+    value: FARGATE
+  - not:
+    - type: value
+      key: platformVersion
+      op: in
+      value:
+      - LATEST
+      - 1.4.0
+      - 1.0.0

@@ -1,0 +1,255 @@
+policies:
+- name: elasticache-replication-group-unencrypted-at-rest
+  resource: aws.elasticache-group
+  description: 'ElastiCache replication group with no at-rest encryption: the snapshots and the
+
+    underlying volumes are left in the clear. For PCI the cache layer is in scope
+
+    even when it is "only a cache", because whatever the application caches
+
+    (sessions, query results) lands there. Evaluated at replication group level (not
+
+    per node) so a single finding is not multiplied by its replicas. Source: prowler
+
+    elasticache_redis_cluster_rest_encryption_enabled / cloudsploit elasticache
+
+    redisClusterEncryptionAtRest.
+
+    '
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 3.5.1
+    - FSBP ElastiCache.4
+    frequency: daily
+  filters:
+  - or:
+    - type: value
+      key: AtRestEncryptionEnabled
+      value: false
+    - type: value
+      key: AtRestEncryptionEnabled
+      value: absent
+- name: elasticache-replication-group-no-transit-encryption
+  resource: aws.elasticache-group
+  description: 'ElastiCache replication group with no TLS: session tokens and cached payloads
+
+    travel in the clear over the internal network, so any compromised workload in
+
+    the VPC can capture them -- session hijacking with no effort. Evaluated at
+
+    replication group level. Source: prowler
+
+    elasticache_redis_cluster_in_transit_encryption_enabled / cloudsploit
+
+    elasticache redisClusterEncryptionInTransit.
+
+    '
+  metadata:
+    severity: high
+    category: encryption
+    owner_tag: resource-owner
+    frameworks:
+    - PCI 4.2.1
+    - FSBP ElastiCache.5
+    frequency: daily
+  filters:
+  - or:
+    - type: value
+      key: TransitEncryptionEnabled
+      value: false
+    - type: value
+      key: TransitEncryptionEnabled
+      value: absent
+- name: elasticache-replication-group-no-auth
+  resource: aws.elasticache-group
+  description: 'ElastiCache replication group with neither an AUTH token nor user groups (RBAC):
+
+    any process with network reach to the cache port reads and writes it with no
+
+    credential at all. MIND THE VOLUME: neither an AUTH token nor RBAC user groups
+
+    are configured by default, so this condition describes the whole fleet rather
+
+    than an anomaly within it -- a METRIC/baseline for the owner, NOT a per-resource
+
+    ticket queue, which is what `alerting: report-only` encodes. Source: prowler
+
+    elasticache_redis_replication_group_auth_enabled.
+
+    '
+  metadata:
+    severity: medium
+    category: access-control
+    owner_tag: resource-owner
+    alerting: report-only
+    frameworks:
+    - PCI 8.6
+    - 'SOX ITGC: Access'
+    - FSBP ElastiCache.6
+    frequency: 4h
+  filters:
+  - type: value
+    key: AuthTokenEnabled
+    value: false
+  - type: value
+    key: UserGroupIds
+    value: absent
+- name: elasticache-replication-group-backup-disabled
+  resource: aws.elasticache-group
+  metadata:
+    severity: info
+    category: resilience
+    frameworks:
+    - FSBP ElastiCache.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ElastiCache (Redis OSS/Valkey) replication groups with automatic backups
+
+    effectively off (SnapshotRetentionLimit < 1 day). Automatic backups are
+
+    off by default on a new replication group, so this control describes the
+
+    whole fleet rather than an anomaly within it: it ships as a METRIC, not
+
+    a per-resource ticket queue (severity info). Escalate individually once
+
+    the owning team triages which groups hold data that actually needs
+
+    point-in-time recovery.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: SnapshotRetentionLimit
+      op: lt
+      value: 1
+    - type: value
+      key: SnapshotRetentionLimit
+      value: absent
+- name: elasticache-cluster-backup-disabled
+  resource: aws.cache-cluster
+  metadata:
+    severity: info
+    category: resilience
+    frameworks:
+    - FSBP ElastiCache.1
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Standalone ElastiCache (Redis OSS/Valkey) clusters -- NOT part of a
+
+    replication group, so not already counted by
+
+    elasticache-replication-group-backup-disabled -- with automatic backups
+
+    effectively off. Memcached is excluded: it has no backup/snapshot
+
+    feature at all. Same default-off reasoning as the replication-group
+
+    control, so it ships as a METRIC, not a per-resource ticket queue.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: in
+    value:
+    - redis
+    - valkey
+  - type: value
+    key: ReplicationGroupId
+    value: absent
+  - or:
+    - type: value
+      key: SnapshotRetentionLimit
+      op: lt
+      value: 1
+    - type: value
+      key: SnapshotRetentionLimit
+      value: absent
+- name: elasticache-cluster-auto-minor-version-upgrade-disabled
+  resource: aws.cache-cluster
+  metadata:
+    severity: info
+    category: vulnerability
+    frameworks:
+    - PCI 6.3.3
+    - FSBP ElastiCache.2
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ElastiCache clusters (Memcached excluded -- this control does not apply
+
+    to it) without automatic minor-version upgrades. Ships at severity info:
+
+    it sizes patch-hygiene debt across the fleet rather than opening a
+
+    ticket per cluster.
+
+    '
+  filters:
+  - type: value
+    key: Engine
+    op: ne
+    value: memcached
+  - or:
+    - type: value
+      key: AutoMinorVersionUpgrade
+      value: false
+    - type: value
+      key: AutoMinorVersionUpgrade
+      value: absent
+- name: elasticache-replication-group-auto-failover-disabled
+  resource: aws.elasticache-group
+  metadata:
+    severity: info
+    category: resilience
+    frameworks:
+    - FSBP ElastiCache.3
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ElastiCache replication groups without automatic failover: a primary
+
+    node failure needs a manual promotion instead of an automatic one.
+
+    Automatic failover is off by default, so this describes the fleet rather
+
+    than an anomaly within it -- a METRIC, not a per-resource ticket queue.
+
+
+    `AutomaticFailover` was observed populated (''enabled'' or ''disabled'') on
+
+    every replication group, so a bare `op: ne` is safe here without an
+
+    `absent` branch.
+
+    '
+  filters:
+  - type: value
+    key: AutomaticFailover
+    op: ne
+    value: enabled
+- name: elasticache-cluster-default-subnet-group
+  resource: aws.cache-cluster
+  metadata:
+    severity: high
+    category: network-exposure
+    frameworks:
+    - FSBP ElastiCache.7
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'ElastiCache clusters using the account''s default VPC subnet group
+
+    instead of a purpose-built one. The subnet group is fixed at creation
+
+    time and cannot be changed in place, so this control only ever prevents
+
+    new occurrences -- it is worth keeping even when nothing matches.
+
+    '
+  filters:
+  - type: value
+    key: CacheSubnetGroupName
+    value: default

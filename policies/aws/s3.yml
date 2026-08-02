@@ -1,0 +1,585 @@
+policies:
+- name: s3-public-block-access-not-enabled
+  resource: aws.s3
+  metadata:
+    frequency: 4h
+  description: 'S3 buckets where at least one of the four Block Public Access
+
+    settings (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy,
+
+    RestrictPublicBuckets) is off at the bucket level. This weakens the
+
+    protection but does not by itself make the bucket public:
+
+    the settings still on can block the ACL or policy path that would
+
+    expose it. What it removes is the guarantee. CIS AWS Foundations
+
+    v1.4.0 (2.1.5).
+
+    '
+  filters:
+  - type: check-public-block
+- name: s3-public-access
+  resource: s3
+  metadata:
+    frequency: 4h
+  description: 'S3 buckets where at least one of the four Block Public Access
+
+    settings (BlockPublicAcls, IgnorePublicAcls, BlockPublicPolicy,
+
+    RestrictPublicBuckets) is off. This weakens the protection; it does not by itself make the bucket
+    public,
+
+    because the settings still on can block the ACL or policy path that
+
+    would expose it.
+
+
+    Same check-public-block filter, with no parameters, as
+
+    s3-public-block-access-not-enabled in check_public_s3.yaml -- the
+
+    two policies overlap.
+
+    '
+  filters:
+  - type: check-public-block
+- name: s3-insecure-transport-exposed
+  resource: aws.s3
+  metadata:
+    severity: high
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP S3.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Buckets with NO effective deny of insecure (non-TLS) transport, that are
+
+    ALSO exposed: public via ACL or bucket policy, or shared with an account
+
+    outside the organisation. A bucket that is both reachable and unencrypted
+
+    in transit is the case where a network position (open wifi, a
+
+    misconfigured proxy, a compromised link) turns into a full read of
+
+    whatever passes through it -- not a theoretical gap.
+
+
+    The exposure half is exactly what s3-public-policy-and-global-access
+
+    already checks: `global-grants` (ACL grant to all-users/authenticated-users,
+
+    excluding static-website-hosting) OR `cross-account` (bucket policy
+
+    granting a non-org account, org-whitelisted so internal sharing is not
+
+    noise). Reused here rather than reinvented, so the two policies agree on
+
+    what "public" means.
+
+
+    Kept deliberately narrow on purpose. `insecure-transport` on its own also
+
+    matches buckets that no principal outside the account can reach at all,
+
+    where the missing TLS deny has no attack path attached to it. Crossing it
+
+    with actual exposure is what makes this a queue rather than an inventory;
+
+    inventory-s3-insecure-transport below keeps the uncrossed version for
+
+    backlog tracking.
+
+    '
+  filters:
+  - type: insecure-transport
+  - or:
+    - type: global-grants
+      allow_website: false
+    - type: cross-account
+      everyone_only: true
+      whitelist_orgids:
+      - o-exampleorg1
+      whitelist:
+      - '111111111111'
+      - '222222222222'
+      - '333333333333'
+- name: inventory-s3-insecure-transport
+  resource: aws.s3
+  metadata:
+    severity: info
+    category: encryption
+    frameworks:
+    - PCI 4.2.1
+    - FSBP S3.5
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'Every bucket with NO effective deny of insecure transport, with no
+
+    crossing against exposure. S3 accepts non-TLS requests unless a bucket
+
+    policy denies them, so this is the AWS default and the control describes
+
+    the whole estate rather than an anomaly inside it: METRIC, not a
+
+    per-resource ticket queue. Work it as migration debt in batches (start
+
+    with the buckets that also show up in s3-insecure-transport-exposed, then
+
+    whatever a team owns next), not one row at a time.
+
+
+    A bucket only needs `s3:PutBucketPolicy` once to add the standard
+
+    `aws:SecureTransport` deny statement; it is one of the cheapest fixes
+
+    in this entire catalogue per finding. The volume is a backlog problem,
+
+    not a difficulty problem.
+
+
+    Buckets where GetBucketPolicy itself was denied (`c7n:DeniedMethods`
+
+    contains `get_bucket_policy`) are EXCLUDED, not counted as a finding:
+
+    an AccessDenied reading the policy is not evidence the policy is
+
+    missing or weak, and treating it as such would silently include the
+
+    accounts a run could not actually check. See the `absent != 0`
+
+    section in extensions/c7n_pack/filters/s3_transport.py.
+
+    '
+  filters:
+  - type: insecure-transport
+- name: s3-kms-bucket-key-disabled
+  resource: aws.s3
+  metadata:
+    severity: low
+    category: cost
+    owner_tag: resource-owner
+    frequency: daily
+  description: 'COST finding, not a security one: S3 buckets with default encryption set
+
+    to aws:kms but S3 Bucket Keys turned off (`BucketKeyEnabled: false`).
+
+
+    Without a bucket key, S3 calls KMS Decrypt/GenerateDataKey once PER
+
+    OBJECT REQUEST against the bucket''s CMK; with it enabled, S3 caches a
+
+    time-limited bucket-level key and calls KMS only occasionally,
+
+    collapsing what can be millions of per-object KMS API calls into a
+
+    handful. On a bucket with real traffic this is a direct, linear
+
+    multiplier on the KMS bill for identical protection -- Bucket Keys do
+
+    not weaken the encryption, they only change how often S3 talks to KMS
+
+    to get the data key.
+
+
+    The remediation is a one-line PutBucketEncryption change, which is what
+
+    makes it worth a low-severity backlog item rather than silence.
+
+
+    CHECK THE KMS POLICY BEFORE ENABLING IT. Bucket Keys change the KMS
+
+    encryption context from the OBJECT ARN to the BUCKET ARN. A key policy or
+
+    a grant with a `kms:EncryptionContext:aws:s3:arn` condition written
+
+    against the object ARN stops matching and starts DENYING requests. So
+
+    this is not "flip it and save money": it is safe on a key with no
+
+    encryption-context conditions, and an outage on one that has them.
+
+
+    Purely declarative -- but NOT as `crypto: aws:kms` + `bucket_key_enabled:
+
+    false` on the same `bucket-encryption` filter, which looks right and
+
+    isn''t. In c7n''s implementation (c7n.resources.s3.BucketEncryption
+
+    .process_bucket) `bucket_key_enabled` is checked in its own branch that
+
+    returns before `crypto` is ever evaluated, so passing both silently
+
+    drops the crypto check: it matches EVERY bucket with BucketKeyEnabled
+
+    not true, AES256 included, since plain SSE-S3 rules carry that same
+
+    field set to false. In practice that form reaches far beyond the
+
+    KMS-encrypted subset this control is about, AES256 buckets included.
+
+
+    The two conditions are split into two filters instead: `bucket-
+
+    encryption` with only `crypto: aws:kms` narrows to KMS buckets AND
+
+    populates `c7n:bucket-encryption` with the raw
+
+    GetBucketEncryption response as a side effect (same call, so this adds
+
+    no extra API cost); a `value` filter then reads `BucketKeyEnabled` off
+
+    that annotation. `absent` is included alongside `false` because a KMS
+
+    rule created before Bucket Keys existed has no BucketKeyEnabled field
+
+    at all, which is exactly the "off" case, not an unknown one.
+
+    '
+  filters:
+  - type: bucket-encryption
+    crypto: aws:kms
+  - or:
+    - type: value
+      key: '"c7n:bucket-encryption".ServerSideEncryptionConfiguration.Rules[0].BucketKeyEnabled'
+      value: false
+    - type: value
+      key: '"c7n:bucket-encryption".ServerSideEncryptionConfiguration.Rules[0].BucketKeyEnabled'
+      value: absent
+- name: s3-public-policy-and-global-access
+  resource: aws.s3
+  metadata:
+    frequency: 4h
+  description: 'S3 buckets that are public via an ACL grant to the all-users or
+
+    authenticated-users group (excluding static-website-hosting grants),
+
+    or whose bucket policy grants access to Principal "*" with no
+
+    condition scoping it to an account in the org. The all-users grant and Principal "*" mean anyone on
+    the internet;
+
+    authenticated-users means any authenticated AWS account, which is
+
+    broad external access but not anonymous. CIS AWS Foundations v1.4.0
+
+    (2.1.1).
+
+    '
+  filters:
+  - or:
+    - type: global-grants
+      allow_website: false
+    - type: cross-account
+      everyone_only: true
+      whitelist_orgids:
+      - o-exampleorg1
+      whitelist:
+      - '111111111111'
+      - '222222222222'
+      - '333333333333'
+- name: s3-bucket-publicly-readable
+  resource: aws.s3
+  metadata:
+    severity: critical
+    category: exposure
+    frequency: 4h
+    frameworks:
+    - FSBP S3.2
+    owner_tag: resource-owner
+  description: 'S3 buckets readable by anyone: an ACL grant of READ/FULL_CONTROL to the
+
+    AllUsers or AuthenticatedUsers group, OR a bucket policy statement that
+
+    allows a get/list action to Principal "*" with no Condition -- AND the
+
+    bucket does not have RestrictPublicBuckets enabled to neutralise it.
+
+
+    FSBP S3.2 is about whether a bucket is publicly READABLE, which is not
+
+    the same question as whether some statement grants public read. With
+
+    `RestrictPublicBuckets: true` a public bucket policy is ignored for
+
+    every principal except the account itself and AWS services, so such a
+
+    bucket is not actually reachable and is excluded here. Without that
+
+    guard the control reports statements rather than reachability, and a
+
+    large share of the rows are buckets nobody outside the account can
+
+    touch.
+
+
+    Buckets that are deliberately public website/CDN origins will match the
+
+    policy-based branch legitimately. Confirm intent with the owner before
+
+    treating a row as an incident, the same way `global-grants` carves out
+
+    `allow_website` elsewhere in this repo.
+
+
+    Uses the same building blocks as `s3-public-policy-and-global-access`
+
+    (global-grants + cross-account, org-whitelisted) so the two policies
+
+    agree on what "external" means, plus the explicit RestrictPublicBuckets
+
+    guard that policy does not have.
+
+    '
+  filters:
+  - type: check-public-block
+    RestrictPublicBuckets: false
+  - or:
+    - type: global-grants
+      allow_website: false
+      permissions:
+      - READ
+      - FULL_CONTROL
+    - type: cross-account
+      everyone_only: true
+      actions:
+      - s3:GetObject
+      - s3:GetObjectVersion
+      - s3:GetObjectAcl
+      - s3:GetObjectVersionAcl
+      - s3:GetObjectTagging
+      - s3:GetObjectVersionTagging
+      - s3:GetObjectAttributes
+      - s3:GetObjectVersionAttributes
+      - s3:GetObjectTorrent
+      - s3:ListBucket
+      - s3:ListBucketVersions
+      - s3:ListBucketMultipartUploads
+      - s3:ListMultipartUploadParts
+      - s3:GetBucketLocation
+      whitelist_orgids:
+      - o-exampleorg1
+      whitelist: &id001
+      - '111111111111'
+      - '222222222222'
+      - '333333333333'
+- name: s3-bucket-publicly-writable
+  resource: aws.s3
+  metadata:
+    severity: critical
+    category: exposure
+    frequency: 4h
+    frameworks:
+    - FSBP S3.3
+    owner_tag: resource-owner
+  description: 'S3 buckets writable by anyone: an ACL grant of WRITE/FULL_CONTROL to the
+
+    AllUsers or AuthenticatedUsers group, OR a bucket policy statement that
+
+    allows a put/delete action to Principal "*" with no Condition -- AND
+
+    RestrictPublicBuckets is not enabled.
+
+
+    Write-side twin of `s3-bucket-publicly-readable` above: same structure,
+
+    same RestrictPublicBuckets reachability guard, put/delete actions
+
+    instead of get/list. Worth running even where it normally returns
+
+    nothing, because a public write is a far worse incident than a public
+
+    read -- arbitrary content injection into a bucket the platform trusts --
+
+    and because a bucket policy that grants public PutObject while the
+
+    account-level block happens to be on is one setting change away from
+
+    being live.
+
+    '
+  filters:
+  - type: check-public-block
+    RestrictPublicBuckets: false
+  - or:
+    - type: global-grants
+      allow_website: false
+      permissions:
+      - WRITE
+      - FULL_CONTROL
+    - type: cross-account
+      everyone_only: true
+      actions:
+      - s3:PutObject
+      - s3:PutObjectAcl
+      - s3:PutObjectTagging
+      - s3:PutObjectVersionAcl
+      - s3:PutObjectVersionTagging
+      - s3:DeleteObject
+      - s3:DeleteObjectVersion
+      - s3:DeleteObjectTagging
+      - s3:DeleteObjectVersionTagging
+      - s3:AbortMultipartUpload
+      - s3:RestoreObject
+      whitelist_orgids:
+      - o-exampleorg1
+      whitelist: *id001
+- name: s3-bucket-policy-grants-sensitive-actions-to-external-account
+  resource: aws.s3
+  metadata:
+    severity: high
+    category: exposure
+    frequency: 4h
+    frameworks:
+    - FSBP S3.6
+    owner_tag: resource-owner
+  description: "S3 bucket policies that grant an account outside the org one of the five\nactions AWS's\
+    \ own S3.6 control treats as sensitive\n(`s3:DeleteBucketPolicy`, `s3:PutBucketAcl`, `s3:PutBucketPolicy`,\n\
+    `s3:PutEncryptionConfiguration`, `s3:PutObjectAcl`) with no Condition\nnarrowing the grant.\n\nTwo\
+    \ things about this control are easy to get wrong if you reimplement\nit by hand instead of leaning\
+    \ on c7n's `cross-account` filter, and both\nmake a hand count come out LOW:\n\n1. A Principal that\
+    \ looks like `AROA...` or `AIDA...` is not an account\n   ID: it is the unique ID AWS substitutes\
+    \ automatically when the role\n   or user a bucket policy pointed at gets deleted. A \"does this look\n\
+    \   like a 12-digit account ID\" check skips it entirely; c7n's\n   `cross-account` correctly treats\
+    \ a principal it cannot resolve to an\n   org account as external, because there is no way to prove\
+    \ it is\n   yours. These dangling references are cleanup debt rather than a live\n   external grant,\
+    \ but they are still a `PutObjectAcl`-class grant to a\n   principal nobody can name, and they become\
+    \ a real hole if that\n   unique ID is ever reissued.\n2. A statement action of `s3:*` is a wildcard\
+    \ PATTERN. c7n's\n   `check_actions` matching (`fnmatch.filter(check_actions, action)`)\n   correctly\
+    \ treats it as covering all five blacklisted actions; a plain\n   set intersection against the literal\
+    \ action strings misses every\n   bucket that grants a wildcard instead of the specific action name.\n\
+    \nExpect legitimate-looking hits from managed third-party integrations\nthat ask for a broad grant\
+    \ to their own control-plane account. The fix\nfor those is a Condition narrowing the grant (typically\
+    \ on a principal\ntag the vendor documents), not a blanket exception -- an unconditioned\ngrant to\
+    \ a vendor account is precisely what this control is about.\n"
+  filters:
+  - type: cross-account
+    actions:
+    - s3:DeleteBucketPolicy
+    - s3:PutBucketAcl
+    - s3:PutBucketPolicy
+    - s3:PutEncryptionConfiguration
+    - s3:PutObjectAcl
+    whitelist_orgids:
+    - o-exampleorg1
+    whitelist: *id001
+- name: s3-server-access-logging-disabled
+  resource: aws.s3
+  metadata:
+    severity: info
+    category: logging
+    frequency: daily
+    frameworks:
+    - FSBP S3.9
+    owner_tag: resource-owner
+  description: 'S3 buckets with server access logging disabled (FSBP S3.9).
+
+
+    METRIC, not a per-bucket ticket queue, and that is why the severity is
+
+    `info` despite the control being a real one: logging off is the AWS
+
+    default for every new bucket, so in any estate that has not adopted it
+
+    deliberately this control describes the fleet rather than an anomaly in
+
+    it. Track the trend and burn it down by account/owner.
+
+    '
+  filters:
+  - type: bucket-logging
+    op: disabled
+- name: s3-acl-used-for-access
+  resource: aws.s3
+  metadata:
+    severity: medium
+    category: access-control
+    frequency: daily
+    frameworks:
+    - FSBP S3.12
+    owner_tag: resource-owner
+  description: 'S3 buckets where an ACL grants access to a principal other than the
+
+    bucket owner, excluding the `LogDelivery` system group (legitimate: it
+
+    is how S3 and ELB access-log delivery is authorised). ACLs are a legacy
+
+    access mechanism that predates IAM and bucket policies, and a grant
+
+    hiding in one is easy to miss in a policy-only review, which is what
+
+    FSBP S3.12 is about.
+
+
+    Why the filter is shaped this way instead of a simple "more than one
+
+    grant" check: two patterns inflate a naive count without meaning
+
+    anything. The bucket owner''s own canonical ID is routinely listed twice
+
+    (FULL_CONTROL granted redundantly to the owner), and `LogDelivery`
+
+    appears on every bucket that is a logging target. So the check is
+
+    DISTINCT canonical-user grantees > 1 -- via `unique_size`, because c7n''s
+
+    ValueFilter has no per-resource way to compare a grant''s `Grantee.ID`
+
+    against that same bucket''s own `Acl.Owner.ID`, and counting distinct IDs
+
+    is the closest expressible approximation of "someone other than the
+
+    owner" -- OR any Group grant that is not LogDelivery.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: Acl.Grants[?Grantee.Type=='CanonicalUser'].Grantee.ID
+      value_type: unique_size
+      op: gt
+      value: 1
+    - type: value
+      key: Acl.Grants[?Grantee.Type=='Group' && Grantee.URI!='http://acs.amazonaws.com/groups/s3/LogDelivery']
+      value_type: size
+      op: gt
+      value: 0
+- name: s3-lifecycle-configuration-missing
+  resource: aws.s3
+  metadata:
+    severity: info
+    category: cost
+    frequency: daily
+    frameworks:
+    - FSBP S3.13
+    owner_tag: resource-owner
+  description: 'S3 buckets with no Lifecycle configuration at all (FSBP S3.13).
+
+
+    METRIC, not a per-bucket ticket queue: a lifecycle configuration only
+
+    exists if somebody set one up on purpose, so absence is the default
+
+    state across an estate and this tracks cost and hygiene debt to work
+
+    through by owner. Severity is `info` for that reason.
+
+
+    Both branches are present on purpose, because "the key is not there"
+
+    and "the key is there and null" are different shapes in the resource
+
+    dict and only checking one of them quietly misses the other.
+
+    '
+  filters:
+  - or:
+    - type: value
+      key: Lifecycle
+      value: absent
+    - type: value
+      key: Lifecycle
+      value: null
