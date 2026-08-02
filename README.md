@@ -1,23 +1,27 @@
 # cloud-custodian-compliance-policies
 
-325 Cloud Custodian policies for AWS, each citing the compliance control it covers.
+**325 Cloud Custodian policies for AWS, each citing the compliance control it covers.**
 
-```
-git clone https://github.com/gustavoortega/cloud-custodian-compliance-policies
-cd cloud-custodian-compliance-policies
-python -m venv .venv
-.venv/bin/pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
-.venv/bin/pytest -q                                  # 217 tests, no AWS account
-.venv/bin/c7n-kit coverage catalogs/fsbp.txt policies/aws
-```
+<!-- badges -->
+![FSBP](https://img.shields.io/badge/FSBP-229%2F369_controls-2ea44f?style=flat-square) ![policies](https://img.shields.io/badge/policies-325-1f6feb?style=flat-square) ![tests](https://img.shields.io/badge/tests-217_offline-1f6feb?style=flat-square) ![license](https://img.shields.io/badge/license-Apache_2.0-6e7781?style=flat-square)
+<!-- /badges -->
 
-```
+```console
+$ git clone https://github.com/gustavoortega/cloud-custodian-compliance-policies
+$ cd cloud-custodian-compliance-policies
+$ pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
+
+$ pytest -q
+217 passed in 2.9s
+
+$ c7n-kit coverage catalogs/fsbp.txt policies/aws
 FSBP  229/369 controls (62%)
 catalog complete: yes
 orphans: none
 ```
 
-Nothing above needs credentials, a network connection, or an AWS account.
+No credentials. No network. No AWS account. That is the whole setup, and it is
+the same thing CI runs on every pull request.
 
 ## Which control is covered by what
 

@@ -215,8 +215,45 @@ def sox_page():
     return "\n".join(out) + "\n"
 
 
+def badges():
+    """Rewrites the badge block in README.md between its two markers.
+
+    Static badges with numbers baked into a URL are a small lie waiting to
+    happen: the count changes, the badge does not. So they get generated from
+    the same data as everything else, and CI fails if the committed README
+    disagrees with what this produces.
+    """
+    controls, _ = read_catalog(CATALOGS["fsbp"][0])
+    by_control = read_policies()
+    covered = sum(1 for c in controls if by_control.get(c))
+    policies = sum(len(yaml.safe_load(open(f))["policies"])
+                   for f in glob.glob(f"{POLICIES}/*.yml"))
+    tests = sum(open(f, encoding="utf-8").read().count("\ndef test_")
+                for f in glob.glob("tests/aws/test_*.py"))
+
+    row = " ".join([
+        f"![FSBP](https://img.shields.io/badge/FSBP-{covered}%2F{len(controls)}"
+        f"_controls-2ea44f?style=flat-square)",
+        f"![policies](https://img.shields.io/badge/policies-{policies}-"
+        f"1f6feb?style=flat-square)",
+        f"![tests](https://img.shields.io/badge/tests-{tests}_offline-"
+        f"1f6feb?style=flat-square)",
+        "![license](https://img.shields.io/badge/license-Apache_2.0-"
+        "6e7781?style=flat-square)",
+    ])
+    body = f"<!-- badges -->\n{row}\n<!-- /badges -->"
+
+    readme = open("README.md", encoding="utf-8").read()
+    updated = re.sub(r"<!-- badges -->.*?<!-- /badges -->", body, readme,
+                     flags=re.S)
+    changed = updated != readme
+    if changed:
+        open("README.md", "w", encoding="utf-8").write(updated)
+    return "README.md", changed
+
+
 os.makedirs(OUT, exist_ok=True)
-written = []
+written = [badges()]
 
 for key, (path, title, prefix, grouping) in CATALOGS.items():
     if not os.path.exists(path):
