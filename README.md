@@ -24,8 +24,6 @@ Cloud Custodian's own documentation ships 109 example policies across 43 files, 
 
 Somebody asked upstream whether c7n could check a compliance framework out of the box, HIPAA in that case: [Discussion #7426](https://github.com/orgs/cloud-custodian/discussions/7426), 15 October 2021, *"Do I need to write my own policies or I can run it out of the box like Prowler?"* Still zero comments.
 
-The community collections do not fill the gap either. The largest has 184 policies and maps them with a `# SOC2` comment in 17 files. The most starred has 126 and no mapping at all. The most rigorous prior art in public is a `comment:` field carrying CIS numbers, written in 2019.
-
 So this is not "another policy collection". It is the compliance mapping, in a form a machine can check.
 
 ## Which control is covered by what

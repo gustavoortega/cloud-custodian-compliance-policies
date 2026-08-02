@@ -54,7 +54,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install c7n c7n-kit
+      # c7n-kit is not on PyPI yet. Installing from git works the moment
+      # that repository is public; until then this job is red on purpose,
+      # and a red job that names its reason beats a green one that skipped.
+      - run: pip install c7n git+https://github.com/gustavoortega/c7n-kit
       # Gated on FSBP only: it is the one catalogue that is complete.
       # An incomplete catalogue produces orphans that are not orphans, so
       # failing on those would train everyone to ignore the gate.
@@ -89,7 +92,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install c7n c7n-kit pytest
+      - run: pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
       # Two hash seeds on purpose: c7n's `or`/`not` filters return their
       # matches through a set, so the order depends on string hashing. A
       # test asserting an unsorted list passes on one seed and fails on
