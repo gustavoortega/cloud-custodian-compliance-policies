@@ -63,6 +63,20 @@ jobs:
       - run: c7n-kit coverage catalogs/pci-4.0.txt policies/aws || true
       - run: c7n-kit coverage catalogs/cis-aws.txt policies/aws || true
 
+  frameworks:
+    name: the per-framework pages are not stale
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyyaml
+      # Regenerates frameworks/*.md and fails if the result differs from what
+      # is committed. A coverage index that drifts is worse than none: it
+      # keeps claiming coverage that a rename or a deletion already removed.
+      - run: CI=1 python ci/generate_frameworks.py
+
   tests:
     name: behavioural tests
     runs-on: ubuntu-latest
