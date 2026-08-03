@@ -196,11 +196,11 @@ class UnencryptedRecoveryPoint(Filter):
     def process(self, resources, event=None):
         matched = []
         for r in resources:
-            valor = r.get("IsEncrypted")
-            if valor is None:
+            is_encrypted = r.get("IsEncrypted")
+            if is_encrypted is None:
                 r["c7n:BackupEncryptionUnknown"] = True
                 continue
-            if valor is False:
+            if is_encrypted is False:
                 r[self.annotation] = {
                     "BackupVaultName": r.get("BackupVaultName"),
                     "ResourceType": r.get("ResourceType"),

@@ -106,11 +106,11 @@ class UnauthenticatedMethod(Filter):
         # (api id, path) -> {verb: detail}, as each stage actually serves it.
         # With require_deployed false the live configuration is used instead,
         # which is what auditing an API that is not deployed yet means.
-        vivo = not self.data.get("require_deployed", True)
+        use_live = not self.data.get("require_deployed", True)
         deployed = {}
         for aid in reachable:
-            fuente = self._live_methods(aid) if vivo else self._deployed_methods(aid)
-            for path, verbs in fuente.items():
+            source = self._live_methods(aid) if use_live else self._deployed_methods(aid)
+            for path, verbs in source.items():
                 deployed.setdefault((aid, path), {}).update(verbs)
 
         matched = []
@@ -118,16 +118,16 @@ class UnauthenticatedMethod(Filter):
             if r["restApiId"] not in reachable:
                 continue
             served = deployed.get((r["restApiId"], r.get("path")), {})
-            abiertos = [
+            open_verbs = [
                 verb
                 for verb, detail in served.items()
                 if verb.upper() not in ignored
                 and detail.get("authorizationType") == "NONE"
                 and detail.get("apiKeyRequired") is False
             ]
-            if abiertos:
+            if open_verbs:
                 r[self.annotation] = {
-                    "Methods": sorted(abiertos),
+                    "Methods": sorted(open_verbs),
                     "Path": r.get("path"),
                     "Stages": sorted(self._stage_names(r["restApiId"])),
                     "HasResourcePolicy": bool(apis.get(r["restApiId"], {}).get("policy")),

@@ -187,18 +187,18 @@ class ExternalTrust(Filter):
         return allowed
 
     def process(self, resources, event=None):
-        propias = self._allowed_accounts()
+        own_accounts = self._allowed_accounts()
         # APPROVED third parties. Kept separate from `whitelist` on purpose: a
         # vendor account is not one of your own. Merging the two makes it
         # impossible to ask "which approved vendors get in without an
         # ExternalId", which is exactly the question `require_external_id`
         # below exists to answer.
-        terceros = set(self.data.get("third_parties") or ())
-        accounts = propias | terceros
+        third_party_accounts = set(self.data.get("third_parties") or ())
+        accounts = own_accounts | third_party_accounts
         orgids = set(self.data.get("whitelist_orgids") or ())
         honour = not self.data.get("include_conditioned", False)
         check_federated = self.data.get("check_federated", True)
-        exigir_eid = self.data.get("require_external_id", False)
+        require_eid = self.data.get("require_external_id", False)
 
         matched = []
         for r in resources:
@@ -207,12 +207,12 @@ class ExternalTrust(Filter):
             for statement in document.get("Statement") or []:
                 if statement.get("Effect") != "Allow":
                     continue
-                if exigir_eid:
+                if require_eid:
                     # Dedicated mode: ONLY the ExternalId gap. Without this the
                     # policy duplicates the general rule and reports every
                     # unapproved vendor, which is already reported elsewhere.
                     if not _has_external_id(statement):
-                        findings.extend(self._sin_external_id(statement, propias))
+                        findings.extend(self._without_external_id(statement, own_accounts))
                     continue
                 bounded = honour and _bound_to_us(statement, accounts, orgids)
                 if not bounded:
@@ -247,7 +247,7 @@ class ExternalTrust(Filter):
                 })
         return out
 
-    def _sin_external_id(self, statement, propias):
+    def _without_external_id(self, statement, own_accounts):
         """ANY trust out of the organisation without sts:ExternalId.
 
         Approved and unapproved vendors alike. The first version only looked at
@@ -264,17 +264,17 @@ class ExternalTrust(Filter):
         out = []
         for principal in _aws_principals(statement):
             principal = str(principal)
-            cuenta = _account_of(principal)
+            account = _account_of(principal)
             # `*` has no account to extract, and it is the WORST case: anyone
             # can assume it. Skipping it for lack of a parseable account meant
             # ignoring the most open trust there is.
             if principal != "*":
                 # inside the organisation the confused deputy does not apply
-                if not cuenta or cuenta in propias:
+                if not account or account in own_accounts:
                     continue
             out.append({
                 "Principal": principal,
-                "Account": cuenta,
+                "Account": account,
                 "Sid": statement.get("Sid"),
                 "Action": statement.get("Action"),
                 "Reason": "external trust without sts:ExternalId",
