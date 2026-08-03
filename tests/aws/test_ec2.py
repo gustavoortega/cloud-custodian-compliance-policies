@@ -6,7 +6,7 @@ Every test asserts the REAL behaviour of the policy as written, including the
 cases where a resource that is missing the key escapes the filter. Those are
 marked with a `# KNOWN LIMITATION` comment. Nothing here fixes a policy.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from c7n_kit.testing import run_policy
 
@@ -69,7 +69,7 @@ def perm(protocol, from_port=None, to_port=None, cidr=None, cidr_v6=None):
 
 def stopped_since(days):
     """`StateTransitionReason` as EC2 formats it, N days in the past."""
-    when = datetime.utcnow() - timedelta(days=days)
+    when = datetime.now(timezone.utc) - timedelta(days=days)
     return 'User initiated (%s GMT)' % when.strftime('%Y-%m-%d %H:%M:%S')
 
 
