@@ -9,6 +9,10 @@ on:
   schedule:
     - cron: '17 6 * * 1'   # weekly, to catch c7n releases and framework drift
 
+# Pinned by commit SHA, not by tag. A tag is a moving reference that whoever
+# controls the action's repository can repoint at any time, so `@v7` is a
+# promise, not a fact. The comment says which release each SHA was, so the
+# next person can read it and Dependabot can bump it.
 permissions:
   contents: read
 
@@ -23,8 +27,8 @@ jobs:
         # behaviour across a release is this repo's real failure mode.
         c7n: ['0.9.49', '0.9.50', '0.9.51']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.11'
       - run: pip install "c7n==${{ matrix.c7n }}" c7n-org
@@ -38,8 +42,8 @@ jobs:
     name: every policy declares its metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.11'
       - run: pip install pyyaml jsonschema
@@ -50,8 +54,8 @@ jobs:
     name: no orphan control IDs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.11'
       # c7n-kit is not on PyPI yet. Installing from git works the moment
@@ -70,8 +74,8 @@ jobs:
     name: the per-framework pages are not stale
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.11'
       - run: pip install pyyaml
@@ -88,8 +92,8 @@ jobs:
       matrix:
         python: ['3.11', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ matrix.python }}
       - run: pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
