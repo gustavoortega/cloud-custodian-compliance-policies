@@ -28,11 +28,11 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install "c7n==${{ matrix.c7n }}" c7n-org
+      # Not `custodian validate` directly: c7n only knows a custom filter if
+      # the module registering it was imported into the SAME process, and
+      # PYTHONPATH plus a separate `python -c "import ..."` is two processes.
       - name: custodian validate
-        run: |
-          export PYTHONPATH="$PWD/extensions"
-          python -c "import c7n_pack"          # registers the custom filters
-          custodian validate policies/aws/*.yml
+        run: python ci/validate.py
 
   metadata:
     name: every policy declares its metadata
