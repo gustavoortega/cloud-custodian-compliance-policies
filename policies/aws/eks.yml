@@ -139,6 +139,7 @@ policies:
 - name: inventory-eks-addon
   resource: aws.eks
   metadata:
+    c7n_min: "0.9.51"
     frequency: daily
   description: 'EKS clusters that have the vpc-cni managed addon installed, with
 

@@ -26,6 +26,7 @@ policies:
 - name: transfer-connector-logging-disabled
   resource: aws.transfer-connector
   metadata:
+    c7n_min: "0.9.50"
     severity: medium
     category: logging
     frameworks:
