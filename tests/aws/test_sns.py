@@ -30,11 +30,16 @@ def test_sns_topic_external_access():
          'Policy': _policy('clean-own', 'arn:aws:iam::000000000000:root')},
         {'TopicArn': ARN % 'clean-whitelisted', 'DisplayName': 'clean-whitelisted',
          'Policy': _policy('clean-whitelisted', 'arn:aws:iam::111111111111:root')},
-        # KNOWN LIMITATION: a topic with no Policy attribute reads as compliant
-        # -- the filter returns False when the policy attribute is missing, so
-        # a failed GetTopicAttributes looks the same as "nothing is shared".
+        # covered by the second branch of the `or`. CrossAccountAccessFilter
+        # returns False outright when the policy attribute is missing, and
+        # here that cannot mean "nothing is shared": SNS gives every topic a
+        # default access policy at creation and GetTopicAttributes always
+        # returns `Policy`. Absent means the attribute set was never
+        # assembled -- unverified, not clean. The SQS twin has no such branch
+        # on purpose: there the attribute is optional by design.
         {'TopicArn': ARN % 'key-absent', 'DisplayName': 'key-absent'},
     ]
-    matched = [r['TopicArn'] for r in run_policy(
-        POLICIES, 'sns-topic-external-access', resources)]
-    assert matched == [ARN % 'matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['TopicArn'] for r in run_policy(
+        POLICIES, 'sns-topic-external-access', resources))
+    assert matched == [ARN % 'key-absent', ARN % 'matches']

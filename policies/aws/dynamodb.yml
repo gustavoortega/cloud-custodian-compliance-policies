@@ -69,14 +69,10 @@ policies:
 
     '
   filters:
-  - or:
-    - type: value
-      key: _ContinuousBackups.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus
-      op: ne
-      value: ENABLED
-    - type: value
-      key: _ContinuousBackups
-      value: absent
+  - type: continuous-backup
+    key: PointInTimeRecoveryDescription.PointInTimeRecoveryStatus
+    op: ne
+    value: ENABLED
 - name: dynamodb-deletion-protection-disabled
   resource: aws.dynamodb-table
   metadata:
@@ -96,22 +92,30 @@ policies:
     at table creation, so non-adoption is the default state.
 
 
-    Checked with a plain positive `value: false`, unlike most flag checks in
+    `DeletionProtectionEnabled` is optional in the DescribeTable response, NOT
 
-    this file, because DynamoDB populates this field with its default on
+    guaranteed on every table as this description previously claimed, and the
 
-    every table -- there is no legitimate absent case to fold in, so a match
+    protective value is the one that has to be set explicitly. So absent cannot
 
-    here really is "someone left it off" and not "we could not read it".
+    mean protected -- a table that predates the feature, or one whose describe
 
-    Where a flag CAN legitimately be missing, this file adds an explicit
+    did not carry the flag, is exactly as deletable as one with an explicit
 
-    absent branch instead; see `dynamodb-point-in-time-recovery-disabled`
+    false. Both belong on the same side of the line, which is what the `or`
 
-    above.
+    encodes. Before it, `None == False` was False in Python and those tables
+
+    were scored as protected, understating the adoption number this METRIC is
+
+    for.
 
     '
   filters:
-  - type: value
-    key: DeletionProtectionEnabled
-    value: false
+  - or:
+    - type: value
+      key: DeletionProtectionEnabled
+      value: false
+    - type: value
+      key: DeletionProtectionEnabled
+      value: absent

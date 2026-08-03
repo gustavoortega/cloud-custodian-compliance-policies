@@ -17,12 +17,36 @@ policies:
 
     the day FTP is silently added to an existing server.
 
+
+    A server with NO `Protocols` list is reported too, in its own branch. The
+
+    list is required at creation and DescribeServer returns it for every
+
+    server -- a Transfer server that listens for nothing does not exist -- so
+
+    an absent list is never "it does not speak FTP", it is "we did not read
+
+    what it speaks". The branch has to be separate because `op: contains`
+
+    against `None` raises TypeError and `ValueFilter.match` swallows that as
+
+    "no match"; an `absent` key on the same filter would never be reached.
+
+
+    A row from that branch is NOT a confirmed FTP listener. It says the
+
+    protocol list never came back; resolve it by describing the server.
+
     '
   filters:
-  - type: value
-    key: Protocols
-    op: contains
-    value: FTP
+  - or:
+    - type: value
+      key: Protocols
+      op: contains
+      value: FTP
+    - type: value
+      key: Protocols
+      value: absent
 - name: transfer-connector-logging-disabled
   resource: aws.transfer-connector
   metadata:

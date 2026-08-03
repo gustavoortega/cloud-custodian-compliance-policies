@@ -2,8 +2,6 @@
 
 Offline: no AWS credentials, no network.
 """
-import pytest
-
 from c7n_kit.testing import run_policy
 
 POLICIES = 'policies/aws/eks.yml'
@@ -14,18 +12,18 @@ def test_eks_cluster_unsupported_kubernetes_version():
         {'name': 'matches', 'version': '1.29', 'status': 'ACTIVE'},
         {'name': 'clean', 'version': '1.33', 'status': 'ACTIVE'},
         {'name': 'clean-newer', 'version': '1.34', 'status': 'ACTIVE'},
+        # `version` absent: the `not-null` guard drops the cluster before
+        # ComparableVersion(None) can raise AttributeError and abort the whole
+        # account/region run. Not reported -- its version is unknown, not old.
+        {'name': 'key-absent', 'status': 'ACTIVE'},
     ]
     matched = [r['name'] for r in run_policy(
         POLICIES, 'eks-cluster-unsupported-kubernetes-version', resources)]
     assert matched == ['matches']
 
-    # KNOWN LIMITATION, worse than a silent miss: with `version` absent,
-    # `value_type: version` builds a ComparableVersion out of None and c7n
-    # raises AttributeError, aborting the whole policy run rather than
-    # skipping the one cluster.
-    with pytest.raises(AttributeError):
-        run_policy(POLICIES, 'eks-cluster-unsupported-kubernetes-version',
-                   [{'name': 'key-absent', 'status': 'ACTIVE'}])
+    # and on its own it is a non-match, not an exception
+    assert run_policy(POLICIES, 'eks-cluster-unsupported-kubernetes-version',
+                      [{'name': 'key-absent', 'status': 'ACTIVE'}]) == []
 
 
 def test_eks_cluster_secrets_not_encrypted():
@@ -71,16 +69,15 @@ def test_eks_nodegroup_unsupported_kubernetes_version():
     resources = [
         {'nodegroupName': 'matches', 'clusterName': 'c1', 'version': '1.30'},
         {'nodegroupName': 'clean', 'clusterName': 'c1', 'version': '1.33'},
+        # same `not-null` guard as the cluster-level control: skipped, not fatal
+        {'nodegroupName': 'key-absent', 'clusterName': 'c1'},
     ]
     matched = [r['nodegroupName'] for r in run_policy(
         POLICIES, 'eks-nodegroup-unsupported-kubernetes-version', resources)]
     assert matched == ['matches']
 
-    # Same limitation as the cluster-level control: an absent `version`
-    # raises AttributeError instead of being skipped or reported.
-    with pytest.raises(AttributeError):
-        run_policy(POLICIES, 'eks-nodegroup-unsupported-kubernetes-version',
-                   [{'nodegroupName': 'key-absent', 'clusterName': 'c1'}])
+    assert run_policy(POLICIES, 'eks-nodegroup-unsupported-kubernetes-version',
+                      [{'nodegroupName': 'key-absent', 'clusterName': 'c1'}]) == []
 
 
 def test_eks_public_endpoint_open():
@@ -105,3 +102,14 @@ def test_eks_public_endpoint_open():
     matched = [r['name'] for r in run_policy(
         POLICIES, 'eks-public-endpoint-open', resources)]
     assert matched == ['matches']
+
+
+def test_cluster_audit_logging_survives_entry_without_types():
+    """A clusterLogging entry with no `types` made `contains(null, ...)` raise,
+    which aborts the run for the whole account rather than skipping the
+    cluster. The entry is now ignored and the cluster is still reported: it has
+    no audit logging enabled, which is exactly the finding."""
+    resources = [{'name': 'c1', 'logging': {'clusterLogging': [{'enabled': True}]}}]
+    matched = [r['name'] for r in run_policy(
+        POLICIES, 'eks-cluster-audit-logging-disabled', resources)]
+    assert matched == ['c1']

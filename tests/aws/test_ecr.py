@@ -15,15 +15,16 @@ def test_ecr_repository_scanning_disabled():
         {'repositoryName': 'clean',
          'repositoryArn': 'arn:aws:ecr:us-east-1:000000000000:repository/clean',
          'imageScanningConfiguration': {'scanOnPush': True}},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch. A repository
-        # with no imageScanningConfiguration block at all is read as compliant
-        # even though nothing is scanning it.
+        # covered: the block is optional and scanOnPush defaults to false, so
+        # a repository with no scanning configuration at all IS a repository
+        # with scan-on-push off -- the exact condition this metric counts.
         {'repositoryName': 'key-absent',
          'repositoryArn': 'arn:aws:ecr:us-east-1:000000000000:repository/key-absent'},
     ]
-    matched = [r['repositoryName'] for r in run_policy(
-        POLICIES, 'ecr-repository-scanning-disabled', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['repositoryName'] for r in run_policy(
+        POLICIES, 'ecr-repository-scanning-disabled', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_ecr_repository_tag_mutable():

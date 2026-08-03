@@ -60,12 +60,37 @@ policies:
     frequency: daily
   description: 'Redshift clusters with an automated snapshot retention period under 7 days.
 
+    A retention of 0 means automated snapshots are off altogether, which is the
+
+    worst case this rule covers and the reason the comparison is `lt` rather
+
+    than a range.
+
+
+    The `absent` branch is a SECOND filter, not an extra key on the first one:
+
+    with `op: lt` a missing key resolves to None, comparing None against 7
+
+    raises TypeError, and c7n''s ValueFilter.match swallows it as "no match".
+
+    Putting `value: absent` inside the same filter would not help either, the
+
+    value-type conversion runs before the absent check. A cluster whose
+
+    retention period never came back is not a cluster with a good retention
+
+    period.
+
     '
   filters:
-  - type: value
-    key: AutomatedSnapshotRetentionPeriod
-    op: lt
-    value: 7
+  - or:
+    - type: value
+      key: AutomatedSnapshotRetentionPeriod
+      op: lt
+      value: 7
+    - type: value
+      key: AutomatedSnapshotRetentionPeriod
+      value: absent
 - name: redshift-audit-logging-disabled
   resource: aws.redshift
   metadata:
@@ -96,13 +121,25 @@ policies:
     frequency: daily
   description: 'Redshift clusters without automatic major version upgrades
 
-    (AllowVersionUpgrade off).
+    (AllowVersionUpgrade off). Matches both an explicit `false` and the key
+
+    being absent: describe_clusters returns AllowVersionUpgrade for every
+
+    provisioned cluster, so a record without it is a cluster we did not manage
+
+    to read, not a cluster with upgrades enabled -- and `None == False` is
+
+    False in Python, so without the second branch it would read as compliant.
 
     '
   filters:
-  - type: value
-    key: AllowVersionUpgrade
-    value: false
+  - or:
+    - type: value
+      key: AllowVersionUpgrade
+      value: false
+    - type: value
+      key: AllowVersionUpgrade
+      value: absent
 - name: redshift-enhanced-vpc-routing-disabled
   resource: aws.redshift
   metadata:
@@ -114,11 +151,22 @@ policies:
 
     to and from the cluster can bypass the VPC''s own security groups and NACLs.
 
+
+    Matches the absent key as well as an explicit `false`: the API documents
+
+    the default as false, so a cluster whose EnhancedVpcRouting never came back
+
+    is at best unverified and at worst exactly the default this rule is about.
+
     '
   filters:
-  - type: value
-    key: EnhancedVpcRouting
-    value: false
+  - or:
+    - type: value
+      key: EnhancedVpcRouting
+      value: false
+    - type: value
+      key: EnhancedVpcRouting
+      value: absent
 - name: redshift-storage-unencrypted
   resource: aws.redshift
   metadata:
@@ -165,8 +213,21 @@ policies:
 
     "Disabled"/"Enabled", not as a boolean, so `value: false` would never match.
 
+
+    The absent key is matched too, and here it is not a "we could not verify"
+
+    branch but the plain reading of the data: Multi-AZ is a newer opt-in
+
+    deployment option, and a cluster record that carries no MultiAZ field at
+
+    all is a single-AZ cluster. Reporting it is a true positive, not noise.
+
     '
   filters:
-  - type: value
-    key: MultiAZ
-    value: Disabled
+  - or:
+    - type: value
+      key: MultiAZ
+      value: Disabled
+    - type: value
+      key: MultiAZ
+      value: absent

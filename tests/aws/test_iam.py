@@ -17,7 +17,9 @@ that is "our" account in every fixture below.
 """
 
 
-from c7n_kit.testing import run_policy  # noqa: E402
+import pytest  # noqa: E402
+
+from c7n_kit.testing import run_policy, verify_mutation  # noqa: E402
 
 POLICIES = 'policies/aws/iam.yml'
 
@@ -40,15 +42,57 @@ def test_iam_server_certificate_expired():
         {'ServerCertificateName': 'clean', 'Path': '/',
          'Arn': 'arn:aws:iam::000000000000:server-certificate/clean',
          'Expiration': '2099-01-01T00:00:00+00:00'},
-        # KNOWN LIMITATION: with `value_type: expiration` an absent Expiration
-        # parses to 0, the comparison against a datetime raises TypeError and
-        # c7n swallows it as "no match" -- the certificate reads as valid.
+        # With `value_type: expiration` the conversion runs BEFORE the absent
+        # check, so `value: absent` on the same filter would do nothing: the
+        # comparison against a datetime raises TypeError, c7n swallows it as
+        # "no match", and the certificate would read as valid. Hence the
+        # separate branch under an `or`.
         {'ServerCertificateName': 'key-absent', 'Path': '/',
          'Arn': 'arn:aws:iam::000000000000:server-certificate/key-absent'},
     ]
-    matched = [r['ServerCertificateName'] for r in run_policy(
-        POLICIES, 'iam-server-certificate-expired', resources)]
-    assert matched == ['matches']
+
+    def expected(matched):
+        # `or` unions through a set, so assert on the sorted names.
+        assert sorted(r['ServerCertificateName'] for r in matched) == [
+            'key-absent', 'matches']
+
+    def drop_absent_branch(policy):
+        branch = policy['filters'][0]['or']
+        policy['filters'][0]['or'] = [
+            f for f in branch if f.get('value') != 'absent']
+        return policy
+
+    expected(run_policy(POLICIES, 'iam-server-certificate-expired', resources))
+    verify_mutation(POLICIES, 'iam-server-certificate-expired', resources,
+                    mutate=drop_absent_branch, assertions=expected)
+
+
+def test_absent_branch_on_the_same_filter_would_not_have_worked():
+    """The reason the fix above is a second filter and not one more key.
+
+    Writing `value: absent` INSIDE the expiration filter does not merely
+    fail to fire: `process_value_type` runs first and calls
+    `timedelta('absent')`, which raises TypeError out of the filter and
+    takes the whole invocation with it. Asserted here so nobody
+    'simplifies' the `or` away.
+    """
+    resources = [
+        {'ServerCertificateName': 'key-absent', 'Path': '/',
+         'Arn': 'arn:aws:iam::000000000000:server-certificate/key-absent'},
+    ]
+
+    def collapse_into_one_filter(policy):
+        policy['filters'] = [{
+            'type': 'value', 'key': 'Expiration', 'op': 'lt',
+            'value_type': 'expiration', 'value': 'absent'}]
+        return policy
+
+    def expected(matched):
+        assert [r['ServerCertificateName'] for r in matched] == ['key-absent']
+
+    with pytest.raises(TypeError):
+        verify_mutation(POLICIES, 'iam-server-certificate-expired', resources,
+                        mutate=collapse_into_one_filter, assertions=expected)
 
 
 def test_inventory_iam_role_cross_account():
@@ -66,9 +110,13 @@ def test_inventory_iam_role_cross_account():
             'Effect': 'Allow',
             'Principal': {'Service': 'ec2.amazonaws.com'},
             'Action': 'sts:AssumeRole'}]),
-        # KNOWN LIMITATION: c7n's cross-account returns False when the policy
-        # attribute is missing, so a role whose AssumeRolePolicyDocument never
-        # came back reads as compliant.
+        # DELIBERATE, not a gap to widen: c7n's cross-account returns False
+        # when the trust document is missing, and this inventory stays that
+        # way. "The document did not come back" is not "the document grants
+        # nothing", but it is not a cross-account grant either -- same call
+        # inventory-s3-insecure-transport makes when GetBucketPolicy was
+        # denied. It is also unreachable in a describe run: aws.iam-role has
+        # `detail_spec = get_role`, which always returns the document.
         {'RoleName': 'key-absent', 'Path': '/',
          'Arn': 'arn:aws:iam::000000000000:role/key-absent'},
     ]
@@ -115,8 +163,9 @@ def test_iam_role_assumable_from_outside_the_org():
                           'arn:aws:iam::000000000000:oidc-provider/'
                           'token.actions.githubusercontent.com'},
             'Action': 'sts:AssumeRoleWithWebIdentity'}]),
-        # KNOWN LIMITATION: no AssumeRolePolicyDocument means no statements to
-        # walk, so a role whose trust policy never came back reads as compliant.
+        # DELIBERATE: no AssumeRolePolicyDocument means no statement to point
+        # at, and this rule is critical/4h -- every row has to be a grant
+        # somebody can go and read. See the note on the cross-account test.
         {'RoleName': 'key-absent', 'Path': '/',
          'Arn': 'arn:aws:iam::000000000000:role/key-absent'},
     ]
@@ -150,7 +199,8 @@ def test_iam_role_external_trust_without_external_id():
             'Effect': 'Allow',
             'Principal': {'AWS': 'arn:aws:iam::000000000000:root'},
             'Action': 'sts:AssumeRole'}]),
-        # KNOWN LIMITATION: no trust document, nothing to walk, reads as clean.
+        # DELIBERATE: no trust document, no statement missing an ExternalId
+        # condition. Same reasoning as the two tests above.
         {'RoleName': 'key-absent', 'Path': '/',
          'Arn': 'arn:aws:iam::000000000000:role/key-absent'},
     ]

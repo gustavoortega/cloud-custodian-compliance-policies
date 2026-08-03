@@ -7,15 +7,18 @@ filter (c7n_pack), which groups by the family inside `taskDefinitionArn`
 and keeps the highest revision of each. Every fixture below uses a
 distinct family so nothing is dropped by that first filter.
 
-`containerDefinitions` is present on every task-definition fixture on
-purpose: the JMESPath `length(containerDefinitions[?...])` raises
+The JMESPath `length(containerDefinitions[?...])` raises
 `In function length(), invalid type for value: None` when the key is
 missing altogether, so "no container definitions at all" is not a silent
-miss, it is a hard error. That case is asserted explicitly at the end.
+miss, it is a hard error that aborts the whole account/region run. Every
+task-definition control that counts container definitions now opens with
+a `containerDefinitions not-null` guard, and each of their tests below
+carries a `no-containers` fixture that asserts the guard turns that abort
+into a skip. `test_task_definition_without_container_definitions_is_skipped`
+asserts the same thing for all five at once.
 """
 
-import pytest
-
+import pytest  # noqa: E402
 
 from c7n_kit.testing import run_policy  # noqa: E402
 
@@ -49,6 +52,10 @@ def test_ecs_task_definition_privileged_container():
         # match on `true` reads that as compliant, which is the right direction.
         {'taskDefinitionArn': TD % 'key-absent', 'family': 'key-absent', 'revision': 1,
          'containerDefinitions': [{'name': 'app'}]},
+        # no containerDefinitions at all: the `not-null` guard drops it before
+        # length(null) can raise and abort the run. Not reported.
+        {'taskDefinitionArn': TD % 'no-containers', 'family': 'no-containers',
+         'revision': 1},
     ]
     matched = [r['family'] for r in run_policy(
         POLICIES, 'ecs-task-definition-privileged-container', resources)]
@@ -72,6 +79,11 @@ def test_ecs_task_definition_writable_root_filesystem():
         # the control here.
         {'taskDefinitionArn': TD % 'key-absent', 'family': 'key-absent', 'revision': 1,
          'containerDefinitions': [{'name': 'app'}]},
+        # no containerDefinitions at all: the `not-null` guard drops it before
+        # length(null) can raise and abort the run. Not reported, and it has no
+        # container that could be writing to its root filesystem anyway.
+        {'taskDefinitionArn': TD % 'no-containers', 'family': 'no-containers',
+         'revision': 1},
     ]
     matched = [r['family'] for r in run_policy(
         POLICIES, 'ecs-task-definition-writable-root-filesystem', resources)]
@@ -90,6 +102,11 @@ def test_ecs_task_definition_secret_in_environment():
         # length 0, no match. Correct: nothing is exposed.
         {'taskDefinitionArn': TD % 'key-absent', 'family': 'key-absent', 'revision': 1,
          'containerDefinitions': [{'name': 'app'}]},
+        # no containerDefinitions at all: dropped by the `not-null` guard
+        # instead of aborting the run on length(null). No containers, no
+        # environment, nothing to expose.
+        {'taskDefinitionArn': TD % 'no-containers', 'family': 'no-containers',
+         'revision': 1},
     ]
     matched = [r['family'] for r in run_policy(
         POLICIES, 'ecs-task-definition-secret-in-environment', resources)]
@@ -108,6 +125,12 @@ def test_ecs_task_definition_no_log_configuration():
         # exactly what the filter looks for, so this IS caught.
         {'taskDefinitionArn': TD % 'key-absent', 'family': 'key-absent', 'revision': 1,
          'containerDefinitions': [{'name': 'app'}]},
+        # no containerDefinitions at all: dropped by the `not-null` guard
+        # instead of aborting the run. Note the contrast with `key-absent`
+        # right above -- a container with no logConfiguration IS a finding, a
+        # family with no containers has no container to be missing one.
+        {'taskDefinitionArn': TD % 'no-containers', 'family': 'no-containers',
+         'revision': 1},
     ]
     matched = [r['family'] for r in run_policy(
         POLICIES, 'ecs-task-definition-no-log-configuration', resources)]
@@ -133,18 +156,35 @@ def test_ecs_task_definition_root_user():
         # definition with neither key is caught.
         {'taskDefinitionArn': TD % 'key-absent', 'family': 'key-absent', 'revision': 1,
          'containerDefinitions': [{'name': 'app'}]},
+        # no containerDefinitions at all: dropped by the `not-null` guard
+        # instead of aborting the run. A family with no containers runs
+        # nothing, as root or otherwise.
+        {'taskDefinitionArn': TD % 'no-containers', 'family': 'no-containers',
+         'revision': 1},
     ]
     matched = [r['family'] for r in run_policy(
         POLICIES, 'ecs-task-definition-root-user', resources)]
     assert matched == ['matches', 'matches-uid', 'windows', 'key-absent']
 
 
-def test_ecs_task_definition_without_container_definitions_raises():
-    """The `length(...)` JMESPath is a hard error, not a silent miss."""
+@pytest.mark.parametrize('policy', [
+    'ecs-task-definition-privileged-container',
+    'ecs-task-definition-writable-root-filesystem',
+    'ecs-task-definition-secret-in-environment',
+    'ecs-task-definition-no-log-configuration',
+    'ecs-task-definition-root-user',
+])
+def test_task_definition_without_container_definitions_is_skipped(policy):
+    """`length(null)` used to abort the run; the guard turns it into a skip.
+
+    A task definition with no containerDefinitions is dropped by the
+    `containerDefinitions not-null` guard, so it is neither reported nor
+    fatal. Drop that guard from any of these five policies and this raises
+    `In function length(), invalid type for value: None`: not a missed
+    resource, but every policy for that account/region losing its output.
+    """
     resources = [{'taskDefinitionArn': TD % 'empty', 'family': 'empty', 'revision': 1}]
-    with pytest.raises(Exception) as exc:
-        run_policy(POLICIES, 'ecs-task-definition-privileged-container', resources)
-    assert 'length()' in str(exc.value)
+    assert run_policy(POLICIES, policy, resources) == []
 
 
 def test_detect_public_ecs():

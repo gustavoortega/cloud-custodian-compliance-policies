@@ -36,13 +36,14 @@ def test_cloudtrail_log_file_validation_disabled():
          'LogFileValidationEnabled': False},
         {'Name': 'clean', 'TrailARN': ARN % 'clean', 'HomeRegion': 'us-east-1',
          'LogFileValidationEnabled': True},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch, so a trail
-        # whose LogFileValidationEnabled never came back reads as compliant.
+        # covered: validation is opt-in and the field defaults to false, so
+        # absent says the same thing an explicit false does.
         {'Name': 'key-absent', 'TrailARN': ARN % 'key-absent', 'HomeRegion': 'us-east-1'},
     ]
-    matched = [r['Name'] for r in run_policy(
-        POLICIES, 'cloudtrail-log-file-validation-disabled', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['Name'] for r in run_policy(
+        POLICIES, 'cloudtrail-log-file-validation-disabled', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_cloudtrail_not_integrated_with_cloudwatch_logs():

@@ -19,9 +19,6 @@ cannot run offline -- those policies are not covered here.
 Assertions are SORTED: c7n's `or:` rebuilds its result from a Python `set` of
 resource ids, so the order varies between processes.
 """
-import pytest
-from jmespath.exceptions import JMESPathTypeError
-
 from c7n_kit.testing import run_policy
 
 POLICIES = 'policies/aws/cloudfront.yml'
@@ -173,15 +170,22 @@ def test_cloudfront_custom_origin_unencrypted():
                      Origins={'Quantity': 1, 'Items': [s3_origin()]},
                      DefaultCacheBehavior=behavior(),
                      CacheBehaviors={'Quantity': 0}),
+        # `Origins` absent: the `Origins.Items not-null` guard drops it before
+        # length(null) can raise and abort the whole invocation. Not reported.
+        distribution('origins-absent',
+                     DefaultCacheBehavior=behavior('allow-all'),
+                     CacheBehaviors={'Quantity': 0}),
+        # Origins present but Items absent crashes the same way without a guard
+        distribution('items-absent', Origins={'Quantity': 0},
+                     DefaultCacheBehavior=behavior('allow-all'),
+                     CacheBehaviors={'Quantity': 0}),
     ]
     assert matched('cloudfront-custom-origin-unencrypted', resources) == [
         'http-only', 'match-viewer-allow-all']
 
-    # KNOWN LIMITATION: `Origins` absent makes length(null) RAISE rather than
-    # evaluate to a non-match, aborting the whole policy run.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'cloudfront-custom-origin-unencrypted',
-                   [distribution('origins-absent')])
+    # and each of them alone is a non-match, not an exception
+    assert run_policy(POLICIES, 'cloudfront-custom-origin-unencrypted',
+                      [distribution('origins-absent')]) == []
 
 
 def test_cloudfront_s3_origin_without_oac():
@@ -192,13 +196,14 @@ def test_cloudfront_s3_origin_without_oac():
         # no S3 origin -> control does not apply
         distribution('custom-only',
                      Origins={'Quantity': 1, 'Items': [custom_origin()]}),
+        # guarded out instead of crashing the run
+        distribution('origins-absent'),
+        distribution('items-absent', Origins={'Quantity': 0}),
     ]
     assert matched('cloudfront-s3-origin-without-oac', resources) == ['matches']
 
-    # KNOWN LIMITATION: same length(null) crash on an absent `Origins`.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'cloudfront-s3-origin-without-oac',
-                   [distribution('origins-absent')])
+    assert run_policy(POLICIES, 'cloudfront-s3-origin-without-oac',
+                      [distribution('origins-absent')]) == []
 
 
 def test_cloudfront_tls_policy_not_recommended():
@@ -243,10 +248,34 @@ def test_cloudfront_lambda_url_origin_without_oac():
         # the `.lambda-url.` infix is the only thing identifying the origin type
         distribution('not-lambda', Origins={'Quantity': 1, 'Items': [
             custom_origin()]}),
+        # guarded out instead of crashing the run
+        distribution('origins-absent'),
+        distribution('items-absent', Origins={'Quantity': 0}),
     ]
     assert matched('cloudfront-lambda-url-origin-without-oac', resources) == ['matches']
 
-    # KNOWN LIMITATION: same length(null) crash on an absent `Origins`.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'cloudfront-lambda-url-origin-without-oac',
-                   [distribution('origins-absent')])
+    assert run_policy(POLICIES, 'cloudfront-lambda-url-origin-without-oac',
+                      [distribution('origins-absent')]) == []
+
+
+def test_s3_origin_without_default_root_object_survives_missing_origins():
+    """A distribution with no `Origins` used to abort the whole account's run.
+
+    `length(null)` raises JMESPathTypeError, c7n does not catch it, and the
+    account writes no results at all, which on a dashboard is indistinguishable
+    from an account with nothing wrong. The guard costs one filter and turns a
+    lost account into a skipped resource.
+    """
+    resources = [{'Id': 'no-origins', 'Enabled': True}]
+    assert run_policy(
+        POLICIES, 'cloudfront-s3-origin-without-default-root-object',
+        resources) == []
+
+
+def test_lambda_url_origin_without_oac_survives_origin_without_domain():
+    """Same failure one level down: the guard covers `Origins.Items`, but
+    `contains(DomainName, ...)` still received a null for an origin that had
+    no DomainName of its own."""
+    resources = [{'Id': 'd', 'Origins': {'Items': [{'Id': 'o1'}]}}]
+    assert run_policy(
+        POLICIES, 'cloudfront-lambda-url-origin-without-oac', resources) == []

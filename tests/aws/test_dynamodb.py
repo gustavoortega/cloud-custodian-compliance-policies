@@ -8,27 +8,24 @@ POLICIES = 'policies/aws/dynamodb.yml'
 
 
 def test_dynamodb_point_in_time_recovery_disabled():
-    resources = [
-        {'TableName': 'matches', 'TableStatus': 'ACTIVE',
-         '_ContinuousBackups': {
-             'ContinuousBackupsStatus': 'ENABLED',
-             'PointInTimeRecoveryDescription': {
-                 'PointInTimeRecoveryStatus': 'DISABLED'}}},
-        {'TableName': 'clean', 'TableStatus': 'ACTIVE',
-         '_ContinuousBackups': {
-             'ContinuousBackupsStatus': 'ENABLED',
-             'PointInTimeRecoveryDescription': {
-                 'PointInTimeRecoveryStatus': 'ENABLED'}}},
-        # `_ContinuousBackups` is NOT a field DescribeTable returns and nothing
-        # in c7n or in this repo's extensions populates it, so in a real run
-        # every table looks like this one and the `absent` branch matches all of
-        # them. Documented, not fixed here.
-        {'TableName': 'key-absent', 'TableStatus': 'ACTIVE'},
-    ]
-    matched = [r['TableName'] for r in run_policy(
-        POLICIES, 'dynamodb-point-in-time-recovery-disabled', resources)]
-    # `or` merges branches through a set of ids: sort for a stable assertion.
-    assert sorted(matched) == ['key-absent', 'matches']
+    """This one cannot run offline any more, and that is the fix.
+
+    It used to filter on `_ContinuousBackups`, a key nothing populates: not
+    DescribeTable, not c7n, not this pack. Both branches of its `or` therefore
+    matched every table in a real run, so the control reported 100% of the
+    fleet and read as if every table had PITR off.
+
+    It now uses c7n's own `continuous-backup` filter, which calls
+    DescribeContinuousBackups per table. That is a real API call, so the
+    harness refuses it rather than returning an empty list that looks like a
+    clean result.
+    """
+    import pytest
+    from c7n_kit.testing import FilterNeedsNetwork
+
+    resources = [{'TableName': 'any', 'TableStatus': 'ACTIVE'}]
+    with pytest.raises(FilterNeedsNetwork):
+        run_policy(POLICIES, 'dynamodb-point-in-time-recovery-disabled', resources)
 
 
 def test_dynamodb_deletion_protection_disabled():
@@ -37,10 +34,12 @@ def test_dynamodb_deletion_protection_disabled():
          'DeletionProtectionEnabled': False},
         {'TableName': 'clean', 'TableStatus': 'ACTIVE',
          'DeletionProtectionEnabled': True},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch, so a table
-        # whose DeletionProtectionEnabled never came back reads as compliant.
+        # covered: protection has to be turned on explicitly, so a table with
+        # no flag at all is exactly as deletable as one with an explicit
+        # false.
         {'TableName': 'key-absent', 'TableStatus': 'ACTIVE'},
     ]
-    matched = [r['TableName'] for r in run_policy(
-        POLICIES, 'dynamodb-deletion-protection-disabled', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['TableName'] for r in run_policy(
+        POLICIES, 'dynamodb-deletion-protection-disabled', resources))
+    assert matched == ['key-absent', 'matches']

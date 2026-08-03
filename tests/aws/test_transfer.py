@@ -11,14 +11,19 @@ def test_transfer_server_ftp_protocol_enabled():
     resources = [
         {'ServerId': 'matches', 'State': 'ONLINE', 'Protocols': ['FTP', 'SFTP']},
         {'ServerId': 'clean', 'State': 'ONLINE', 'Protocols': ['SFTP']},
-        # KNOWN LIMITATION: `op: contains` against an absent Protocols raises
-        # TypeError inside c7n, which swallows it as "no match" -- a server
-        # whose protocol list never came back is reported as compliant.
+        # covered by the second branch. `op: contains` against an absent
+        # Protocols raises TypeError inside c7n, which swallows it as "no
+        # match", so only a separate filter reaches it. Protocols is required
+        # at creation, so an absent list is never "it does not speak FTP".
         {'ServerId': 'key-absent', 'State': 'ONLINE'},
+        # an empty list IS a real answer and stays clean: `contains` on []
+        # is a well-defined False, not a swallowed TypeError.
+        {'ServerId': 'clean-empty', 'State': 'ONLINE', 'Protocols': []},
     ]
-    matched = [r['ServerId'] for r in run_policy(
-        POLICIES, 'transfer-server-ftp-protocol-enabled', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['ServerId'] for r in run_policy(
+        POLICIES, 'transfer-server-ftp-protocol-enabled', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_transfer_connector_logging_disabled():

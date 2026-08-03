@@ -21,20 +21,41 @@ policies:
     an anomaly among them: a METRIC, not a per-resource ticket queue.
 
 
-    `EnableTerminationProtection` is always present as a real boolean on
+    `EnableTerminationProtection` is optional in the DescribeStacks response,
 
-    every stack the API returns, so this is a direct `value: false` check
+    NOT guaranteed as this description previously claimed, and the protective
 
-    with no absence guard needed.
+    value is the one that has to be set explicitly -- off is the default. So
+
+    absent cannot mean protected: it means either a stack that never had the
+
+    flag written or a response we did not get, and both belong with the
+
+    explicit false. Without the `or`, `None == False` is False in Python and
+
+    those stacks were counted as protected, which understates the very METRIC
+
+    this policy exists to produce.
+
+
+    The `ParentId: absent` filter above is a scoping gate, not an oversight:
+
+    nested stacks inherit termination protection from the root and cannot set
+
+    it themselves, so they are excluded on purpose.
 
     '
   filters:
   - type: value
     key: ParentId
     value: absent
-  - type: value
-    key: EnableTerminationProtection
-    value: false
+  - or:
+    - type: value
+      key: EnableTerminationProtection
+      value: false
+    - type: value
+      key: EnableTerminationProtection
+      value: absent
 - name: cloudformation-stack-without-service-role
   resource: aws.cfn
   metadata:

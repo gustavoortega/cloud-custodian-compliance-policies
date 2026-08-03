@@ -3,7 +3,7 @@
 **325 Cloud Custodian policies for AWS, each citing the compliance control it covers.**
 
 <!-- badges -->
-![FSBP](https://img.shields.io/badge/FSBP-229%2F369_controls-2ea44f?style=flat-square) ![policies](https://img.shields.io/badge/policies-325-1f6feb?style=flat-square) ![tests](https://img.shields.io/badge/tests-217_offline-1f6feb?style=flat-square) ![license](https://img.shields.io/badge/license-Apache_2.0-6e7781?style=flat-square)
+![FSBP](https://img.shields.io/badge/FSBP-229%2F369_controls-2ea44f?style=flat-square) ![policies](https://img.shields.io/badge/policies-325-1f6feb?style=flat-square) ![tests](https://img.shields.io/badge/tests-231_offline-1f6feb?style=flat-square) ![license](https://img.shields.io/badge/license-Apache_2.0-6e7781?style=flat-square)
 <!-- /badges -->
 
 ```console
@@ -12,7 +12,7 @@ $ cd cloud-custodian-compliance-policies
 $ pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
 
 $ pytest -q
-217 passed in 2.9s
+231 passed in 4.5s
 
 $ c7n-kit coverage catalogs/fsbp.txt policies/aws
 FSBP  229/369 controls (62%)
@@ -47,7 +47,7 @@ SOX has no numbered control list to cross against at all.
 |---|---|
 | Policies | 325, in 42 files, one per AWS service |
 | Custom filters | 10, for controls stock c7n cannot express |
-| Tests | 217, offline, no AWS account |
+| Tests | 231, offline, no AWS account |
 | Orphans | zero: no policy cites a control that does not exist |
 
 The mapping lives inside the policy:
@@ -78,7 +78,7 @@ The mapping lives inside the policy:
 
 **Get a coverage number with a denominator.** `custodian` has no concept of a framework, a control ID or a severity. `c7n-kit coverage` prints `229/369` and fails the build when a policy cites a control that does not exist.
 
-**Test a policy against a resource shape your account does not have.** `custodian run --dryrun` still calls AWS to enumerate, so a policy is only ever tested against whatever happens to be in your account today. The 217 tests here run c7n's real filter engine against resources typed by hand, including the case that breaks everyone:
+**Test a policy against a resource shape your account does not have.** `custodian run --dryrun` still calls AWS to enumerate, so a policy is only ever tested against whatever happens to be in your account today. The 231 tests here run c7n's real filter engine against resources typed by hand, including the case that breaks everyone:
 
 ```python
 {'DBInstanceIdentifier': 'c'}          # StorageEncrypted never came back
@@ -117,7 +117,7 @@ policies/aws/<service>.yml    one file per AWS service, 42 of them
 frameworks/<framework>.md     GENERATED index, control by control
 catalogs/                     framework control IDs, each declaring whether it is complete
 extensions/c7n_pack/            10 custom filters for controls stock c7n cannot express
-tests/aws/test_<service>.py   217 behavioural tests, offline
+tests/aws/test_<service>.py   231 behavioural tests, offline
 ```
 
 Grouping is by AWS service and not by framework, because c7n-org enumerates once per policy file: split one service across two files and you enumerate it twice per run. Grouping by framework forces the same control to be redeclared once per framework version, which is what Steampipe pays for its nine live CIS versions.

@@ -49,6 +49,17 @@ policies:
 
     workgroupEnforceConfiguration.
 
+
+    `EnforceWorkGroupConfiguration` is optional in CreateWorkGroup and defaults
+
+    to FALSE, so an absent value is not a hole in the answer -- it IS the answer,
+
+    and it is the insecure one. The `absent` branch also covers the workgroup
+
+    whose GetWorkGroup detail never merged a `Configuration` block at all, the
+
+    same case the encryption control above already guards with `value: absent`.
+
     '
   conditions:
   - type: value
@@ -68,9 +79,13 @@ policies:
   - type: value
     key: State
     value: ENABLED
-  - type: value
-    key: Configuration.EnforceWorkGroupConfiguration
-    value: false
+  - or:
+    - type: value
+      key: Configuration.EnforceWorkGroupConfiguration
+      value: false
+    - type: value
+      key: Configuration.EnforceWorkGroupConfiguration
+      value: absent
 - name: athena-workgroup-logging-disabled
   resource: aws.athena-work-group
   metadata:
@@ -82,9 +97,22 @@ policies:
     frequency: daily
   description: 'Athena workgroups with CloudWatch query metrics/logging turned off.
 
-    `PublishCloudWatchMetricsEnabled` is present (true or false) on every
+    `PublishCloudWatchMetricsEnabled` is optional in CreateWorkGroup and
 
-    workgroup, so a match is a real setting and not an unpopulated field.
+    defaults to FALSE, so an absent value means the same thing an explicit
+
+    false does: nothing is publishing query metrics. Both branches of the
+
+    `or` report that one condition.
+
+
+    The absent case is reachable for a second reason too: `Configuration`
+
+    comes from GetWorkGroup, not from ListWorkGroups, so a workgroup whose
+
+    detail call never merged has no `Configuration` key at all -- and
+
+    "we could not read it" must not be filed as "it is on".
 
 
     Expect the default workgroup -- literally named "primary", one per
@@ -95,6 +123,10 @@ policies:
 
     '
   filters:
-  - type: value
-    key: Configuration.PublishCloudWatchMetricsEnabled
-    value: false
+  - or:
+    - type: value
+      key: Configuration.PublishCloudWatchMetricsEnabled
+      value: false
+    - type: value
+      key: Configuration.PublishCloudWatchMetricsEnabled
+      value: absent

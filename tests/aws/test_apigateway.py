@@ -22,9 +22,6 @@ Resource shapes:
 
 Assertions are SORTED for consistency with the rest of the suite.
 """
-import pytest
-from jmespath.exceptions import JMESPathTypeError
-
 from c7n_kit.testing import run_policy
 
 POLICIES = 'policies/aws/apigateway.yml'
@@ -60,15 +57,17 @@ def test_apigw_rest_stage_execution_logging_disabled():
         # no method settings configured at all
         stage('empty-methodsettings', methodSettings={}),
         stage('no-logginglevel', methodSettings={'*/*': method_setting()}),
+        # `methodSettings` missing entirely: the `value: present` guard drops it
+        # BEFORE values(null) can raise and abort the whole invocation. The
+        # stage is not reported -- its logging state is unknown, not verified.
+        stage('methodsettings-absent'),
     ]
     assert matched('apigw-rest-stage-execution-logging-disabled', resources,
                    'stageName') == ['empty-methodsettings', 'no-logginglevel', 'off']
 
-    # KNOWN LIMITATION: `methodSettings` missing entirely makes values(null)
-    # RAISE instead of evaluating to a non-match, aborting the policy run.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'apigw-rest-stage-execution-logging-disabled',
-                   [stage('methodsettings-absent')])
+    # and on its own it is a non-match, not an exception
+    assert run_policy(POLICIES, 'apigw-rest-stage-execution-logging-disabled',
+                      [stage('methodsettings-absent')]) == []
 
 
 def test_apigw_rest_stage_without_client_certificate():
@@ -119,14 +118,14 @@ def test_apigw_rest_stage_cache_not_encrypted():
             '~1orders/GET': method_setting(cachingEnabled=True,
                                            cacheDataEncrypted=False)}),
         stage('empty-methodsettings', methodSettings={}),
+        # same `value: present` guard: no crash, and no report either
+        stage('methodsettings-absent'),
     ]
     assert matched('apigw-rest-stage-cache-not-encrypted', resources,
                    'stageName') == ['matches', 'per-path']
 
-    # KNOWN LIMITATION: same values(null) crash on an absent `methodSettings`.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'apigw-rest-stage-cache-not-encrypted',
-                   [stage('methodsettings-absent')])
+    assert run_policy(POLICIES, 'apigw-rest-stage-cache-not-encrypted',
+                      [stage('methodsettings-absent')]) == []
 
 
 def test_apigwv2_stage_access_logging_disabled():

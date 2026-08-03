@@ -39,9 +39,42 @@ policies:
 
     with every complexity requirement off.
 
+
+    THE `Policies.PasswordPolicy` ABSENT BRANCH IS THE LOAD-BEARING ONE. Every
+
+    other branch reads a field UNDER that block: `op: lt` and `op: gt` against
+
+    `None` raise TypeError and `ValueFilter.match` swallows that as "no match",
+
+    and `value: false` against `None` is False because `None == False` is False
+
+    in Python. With the block missing, all six comparisons resolved to "not a
+
+    finding" at once, so a user pool with NO PASSWORD POLICY AT ALL -- the worst
+
+    case this control exists to catch -- was reported as compliant. This branch
+
+    is what makes the other six mean anything.
+
+
+    Absence is checked at the BLOCK level, not per field, and that is
+
+    deliberate. Cognito documents secure defaults for the individual settings
+
+    (minimum length 8, uppercase/lowercase/number/symbol all required), so one
+
+    field missing from a policy that IS present is not evidence of weakness, and
+
+    an `absent` branch per field would report pools that are fine. What cannot
+
+    be defended is having read no password policy at all and filing it as pass.
+
     '
   filters:
   - or:
+    - type: value
+      key: Policies.PasswordPolicy
+      value: absent
     - type: value
       key: Policies.PasswordPolicy.MinimumLength
       op: lt
@@ -155,8 +188,25 @@ policies:
 
     gate, and the directory is not recoverable afterwards.
 
+
+    `DeletionProtection` is a two-value enum and only one of them is protective:
+
+    a pool is protected when the field says ACTIVE, and nothing else. So absent
+
+    cannot mean protected -- either the pool predates the feature, or the
+
+    describe never returned it. Both belong on the same side of the line as
+
+    INACTIVE, which is why the `or` treats them alike. Equality against the
+
+    string "INACTIVE" on its own filed every one of those pools as compliant.
+
     '
   filters:
-  - type: value
-    key: DeletionProtection
-    value: INACTIVE
+  - or:
+    - type: value
+      key: DeletionProtection
+      value: INACTIVE
+    - type: value
+      key: DeletionProtection
+      value: absent

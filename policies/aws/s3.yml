@@ -534,6 +534,40 @@ policies:
 
     owner" -- OR any Group grant that is not LogDelivery.
 
+
+    THE THIRD BRANCH IS THE "WE NEVER READ THE ACL" CASE, and it is not the
+
+    same as an empty ACL. `unique_size` and `size` on a missing `Acl` both fall
+
+    back to 0, and 0 is below both thresholds, so a bucket whose ACL never came
+
+    back scored exactly like a bucket with nothing but the owner grant. Every
+
+    S3 bucket HAS an ACL -- at minimum the owner''s FULL_CONTROL -- so `Acl`
+
+    absent is never "no grants"; it is "GetBucketAcl did not answer".
+
+
+    Buckets where GetBucketAcl was DENIED are excluded from that branch rather
+
+    than reported, the same call `inventory-s3-insecure-transport` makes for
+
+    GetBucketPolicy. c7n''s `assemble_bucket` records an AccessDenied as
+
+    `get_bucket_acl` in `c7n:DeniedMethods` and leaves `Acl` unset; an
+
+    AccessDenied reading an ACL is not evidence of a grant in it, and counting
+
+    it as one would quietly fill the queue with the accounts a run could not
+
+    check. Audit those separately by querying `c7n:DeniedMethods`, which c7n
+
+    populates with no extra code here. What is left in the third branch is an
+
+    `Acl` missing with NO recorded denial to explain it, which is an anomaly
+
+    worth a row.
+
     '
   filters:
   - or:
@@ -547,6 +581,15 @@ policies:
       value_type: size
       op: gt
       value: 0
+    - and:
+      - type: value
+        key: Acl
+        value: absent
+      - not:
+        - type: value
+          key: '"c7n:DeniedMethods"'
+          op: contains
+          value: get_bucket_acl
 - name: s3-lifecycle-configuration-missing
   resource: aws.s3
   metadata:

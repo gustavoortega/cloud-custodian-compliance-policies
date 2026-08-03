@@ -23,11 +23,32 @@ policies:
 
     [FSBP ECR.1]
 
+
+    `imageScanningConfiguration` is optional in the DescribeRepositories
+
+    response and `scanOnPush` defaults to false, so a repository with no
+
+    scanning block at all is not an unread repository -- it is a repository
+
+    with scan-on-push off, which is the exact condition this policy counts.
+
+    The `or` puts both spellings of that one state together. Without it,
+
+    `None == False` is False in Python and the repositories with NO scanning
+
+    configuration whatsoever were the ones excluded from a metric about
+
+    scanning adoption.
+
     '
   filters:
-  - type: value
-    key: imageScanningConfiguration.scanOnPush
-    value: false
+  - or:
+    - type: value
+      key: imageScanningConfiguration.scanOnPush
+      value: false
+    - type: value
+      key: imageScanningConfiguration.scanOnPush
+      value: absent
 - name: ecr-repository-tag-mutable
   resource: aws.ecr
   metadata:

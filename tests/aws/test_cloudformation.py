@@ -19,14 +19,19 @@ def test_cloudformation_stack_termination_protection_disabled():
         {'StackName': 'nested', 'StackStatus': 'CREATE_COMPLETE',
          'ParentId': 'arn:aws:cloudformation:us-east-1:000000000000:stack/root/abc',
          'EnableTerminationProtection': False},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch. DescribeStacks
-        # omits EnableTerminationProtection on stacks that never had it set, and
-        # such a stack is reported as compliant.
+        # covered: DescribeStacks omits EnableTerminationProtection on stacks
+        # that never had it set, and off is the default -- absent cannot mean
+        # protected.
         {'StackName': 'key-absent', 'StackStatus': 'CREATE_COMPLETE'},
+        # nested AND with the flag absent: still out of scope, the ParentId
+        # gate runs first and widening the second filter did not widen it.
+        {'StackName': 'nested-key-absent', 'StackStatus': 'CREATE_COMPLETE',
+         'ParentId': 'arn:aws:cloudformation:us-east-1:000000000000:stack/root/def'},
     ]
-    matched = [r['StackName'] for r in run_policy(
-        POLICIES, 'cloudformation-stack-termination-protection-disabled', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['StackName'] for r in run_policy(
+        POLICIES, 'cloudformation-stack-termination-protection-disabled', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_cloudformation_stack_without_service_role():

@@ -79,6 +79,19 @@ policies:
 
     elasticache_redis_replication_group_auth_enabled.
 
+
+    `AuthTokenEnabled` is only true when a token was actually set, so absent and
+
+    false say the same thing: no token. The `or` treats them alike, which also
+
+    keeps the two halves of this filter symmetrical -- the RBAC half already
+
+    reads `UserGroupIds: absent` as "no user groups". Before the `or`, a group
+
+    that returned neither field, i.e. one with NO credential of any kind, was
+
+    the one shape this control let through.
+
     '
   metadata:
     severity: medium
@@ -91,9 +104,13 @@ policies:
     - FSBP ElastiCache.6
     frequency: 4h
   filters:
-  - type: value
-    key: AuthTokenEnabled
-    value: false
+  - or:
+    - type: value
+      key: AuthTokenEnabled
+      value: false
+    - type: value
+      key: AuthTokenEnabled
+      value: absent
   - type: value
     key: UserGroupIds
     value: absent
@@ -248,8 +265,31 @@ policies:
 
     new occurrences -- it is worth keeping even when nothing matches.
 
+
+    A cluster with no `CacheSubnetGroupName` at all is reported under the same
+
+    control, and the reason is not symmetry with the other absence guards in
+
+    this file: leaving the subnet group unspecified at creation is precisely how
+
+    a cluster ENDS UP in the default group. Absence therefore leans toward the
+
+    matched condition rather than away from it, and it cannot mean "a
+
+    purpose-built group we could not see" -- describe_cache_clusters returns
+
+    the name for every VPC cluster. A row from this branch means "no subnet
+
+    group name came back", not a confirmed default group; check it before
+
+    filing it.
+
     '
   filters:
-  - type: value
-    key: CacheSubnetGroupName
-    value: default
+  - or:
+    - type: value
+      key: CacheSubnetGroupName
+      value: default
+    - type: value
+      key: CacheSubnetGroupName
+      value: absent

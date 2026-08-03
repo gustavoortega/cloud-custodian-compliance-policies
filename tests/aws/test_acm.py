@@ -18,15 +18,20 @@ def test_acm_certificate_not_renewed():
          'Status': 'EXPIRED', 'NotAfter': '2020-01-01T00:00:00Z'},
         {'CertificateArn': 'clean', 'DomainName': 'b.example.com',
          'Status': 'ISSUED', 'NotAfter': '2099-01-01T00:00:00Z'},
-        # KNOWN LIMITATION: NotAfter absent resolves to None and the
-        # expiration comparison never matches, so a certificate AWS never
-        # finished describing is reported as compliant.
+        # covered by the second branch of the `or`: an ISSUED certificate
+        # always carries NotAfter, so a missing one is one we could not check.
         {'CertificateArn': 'key-absent', 'DomainName': 'c.example.com',
          'Status': 'ISSUED'},
+        # NOT reported, deliberately: a certificate still waiting for
+        # validation has no NotAfter by design, and a "renew this" ticket for
+        # a certificate that was never issued is noise, not coverage.
+        {'CertificateArn': 'clean-pending-no-notafter', 'DomainName': 'd.example.com',
+         'Status': 'PENDING_VALIDATION'},
     ]
-    matched = [r['CertificateArn'] for r in run_policy(
-        POLICIES, 'acm-certificate-not-renewed', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['CertificateArn'] for r in run_policy(
+        POLICIES, 'acm-certificate-not-renewed', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_acm_certificate_rsa_key_too_short():
@@ -73,14 +78,13 @@ def test_acm_certificate_expiring_30d():
         # not ISSUED, so out of scope even though it is past NotAfter
         {'CertificateArn': 'clean-pending', 'DomainName': 'c.example.com',
          'Status': 'PENDING_VALIDATION', 'NotAfter': '2020-01-01T00:00:00Z'},
-        # KNOWN LIMITATION: absent NotAfter never matches the expiration
-        # comparison, so the certificate is reported as compliant.
+        # covered by the second branch of the `or`, inside the ISSUED gate.
         {'CertificateArn': 'key-absent', 'DomainName': 'd.example.com',
          'Status': 'ISSUED'},
     ]
-    matched = [r['CertificateArn'] for r in run_policy(
-        POLICIES, 'acm-certificate-expiring-30d', resources)]
-    assert matched == ['matches']
+    matched = sorted(r['CertificateArn'] for r in run_policy(
+        POLICIES, 'acm-certificate-expiring-30d', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_acm_certificate_renewal_failed():

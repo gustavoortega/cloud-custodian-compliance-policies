@@ -215,6 +215,30 @@ def sox_page():
     return "\n".join(out) + "\n"
 
 
+def _count_tests():
+    """Counts test CASES, the number pytest prints, not test functions.
+
+    A parametrised test is one `def` and several cases, so counting `def
+    test_` under-reports. The badge sits next to a console block showing
+    pytest's own output; two different numbers for the same thing is the
+    small dishonesty this repo argues against.
+    """
+    total = 0
+    for path in glob.glob("tests/aws/test_*.py"):
+        src = open(path, encoding="utf-8").read()
+        # Each @pytest.mark.parametrize decorator turns the def below it into
+        # as many cases as it lists. Count the list entries, not the def.
+        params = {}
+        for block in re.finditer(
+                r"@pytest\.mark\.parametrize\([^,]+,\s*\[(.*?)\]\s*\)\s*\ndef (test_\w+)",
+                src, re.S):
+            entries = [x for x in block.group(1).split("\n") if x.strip().rstrip(",")]
+            params[block.group(2)] = max(1, len(entries))
+        for name in re.findall(r"^def (test_\w+)", src, re.M):
+            total += params.get(name, 1)
+    return total
+
+
 def badges():
     """Rewrites the badge block in README.md between its two markers.
 
@@ -228,8 +252,7 @@ def badges():
     covered = sum(1 for c in controls if by_control.get(c))
     policies = sum(len(yaml.safe_load(open(f))["policies"])
                    for f in glob.glob(f"{POLICIES}/*.yml"))
-    tests = sum(open(f, encoding="utf-8").read().count("\ndef test_")
-                for f in glob.glob("tests/aws/test_*.py"))
+    tests = _count_tests()
 
     row = " ".join([
         f"![FSBP](https://img.shields.io/badge/FSBP-{covered}%2F{len(controls)}"

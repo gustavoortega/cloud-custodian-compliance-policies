@@ -13,6 +13,40 @@ policies:
 
     mskClusterEncryptionInTransit.
 
+
+    THE ABSENT BRANCH IS SCOPED TO `ClusterType: PROVISIONED`, and the scoping
+
+    is the whole point. `op: in` converts an absent key into an empty tuple
+
+    before comparing, and `()` is not in the list, so a cluster with no
+
+    `EncryptionInfo` block scored as encrypted -- the same silent pass a
+
+    `value: false` without an `absent` branch produces, reached by a different
+
+    mechanism.
+
+
+    But absence has two very different causes here. c7n enumerates with
+
+    `list_clusters_v2` and `DescribeKafka.augment` flattens the `Provisioned`
+
+    sub-document up to the top level for backwards compatibility, which is why
+
+    `EncryptionInfo` reads unprefixed. A SERVERLESS cluster has no
+
+    `Provisioned` block to flatten, so the key is absent on every one of them
+
+    -- and serverless MSK has no plaintext option at all, TLS is mandatory and
+
+    not configurable. An unscoped `absent` branch would report the entire
+
+    serverless fleet as plaintext. On a PROVISIONED cluster DescribeCluster
+
+    always returns `EncryptionInfo` (ClientBroker defaults to TLS when the
+
+    creator omits it), so there the absence is a real anomaly.
+
     '
   metadata:
     severity: high
@@ -23,12 +57,20 @@ policies:
     - FSBP MSK.1
     frequency: daily
   filters:
-  - type: value
-    key: EncryptionInfo.EncryptionInTransit.ClientBroker
-    op: in
-    value:
-    - PLAINTEXT
-    - TLS_PLAINTEXT
+  - or:
+    - type: value
+      key: EncryptionInfo.EncryptionInTransit.ClientBroker
+      op: in
+      value:
+      - PLAINTEXT
+      - TLS_PLAINTEXT
+    - and:
+      - type: value
+        key: ClusterType
+        value: PROVISIONED
+      - type: value
+        key: EncryptionInfo.EncryptionInTransit.ClientBroker
+        value: absent
 - name: msk-cluster-unauthenticated-access-enabled
   resource: aws.kafka
   description: 'The MSK cluster allows unauthenticated clients (Unauthenticated enabled and no

@@ -28,13 +28,52 @@ policies:
 
     framework tag that policy does not.
 
+
+    THE SECOND BRANCH IS NOT THE SAME AS AN `absent` KEY ON THE FIRST. With
+
+    `value_type: expiration` an absent `NotAfter` parses to `None`, comparing it
+
+    to a date raises TypeError, and `ValueFilter.match` swallows that as "no
+
+    match" -- so the guard has to be its own filter inside an `or`, never an
+
+    extra key on the comparison.
+
+
+    That branch is DELIBERATELY SCOPED BY `Status`. `NotAfter` is absent by
+
+    design on a certificate that was never issued (PENDING_VALIDATION, FAILED,
+
+    VALIDATION_TIMED_OUT); reporting those would mean opening a "renew this"
+
+    ticket for a certificate that does not exist yet, which is noise, not
+
+    coverage. In the four states listed the certificate HAS been issued at some
+
+    point, so ACM always returns `NotAfter` and its absence is a real anomaly:
+
+    we could not read the expiry of a live certificate.
+
     '
   filters:
-  - type: value
-    key: NotAfter
-    value_type: expiration
-    op: less-than
-    value: 30
+  - or:
+    - type: value
+      key: NotAfter
+      value_type: expiration
+      op: less-than
+      value: 30
+    - and:
+      - type: value
+        key: Status
+        op: in
+        value:
+        - ISSUED
+        - INACTIVE
+        - EXPIRED
+        - REVOKED
+      - type: value
+        key: NotAfter
+        value: absent
 - name: acm-certificate-rsa-key-too-short
   resource: aws.acm-certificate
   metadata:
@@ -100,16 +139,33 @@ policies:
 
     for the one above: it leaves room to renew before the outage.
 
+
+    The `Status: ISSUED` gate stays OUTSIDE the `or`, and it is what makes the
+
+    `absent` branch safe: an issued certificate always carries `NotAfter`, so
+
+    inside this scope a missing expiry is an anomaly and not the ordinary shape
+
+    of a certificate still waiting for validation. The absent case needs its own
+
+    filter rather than a key on the comparison because `value_type: expiration`
+
+    on `None` raises TypeError and c7n reads that as "no match".
+
     '
   filters:
   - type: value
     key: Status
     value: ISSUED
-  - type: value
-    key: NotAfter
-    value_type: expiration
-    op: lt
-    value: 30
+  - or:
+    - type: value
+      key: NotAfter
+      value_type: expiration
+      op: lt
+      value: 30
+    - type: value
+      key: NotAfter
+      value: absent
 - name: acm-certificate-renewal-failed
   resource: aws.acm-certificate
   metadata:

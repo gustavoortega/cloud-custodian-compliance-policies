@@ -17,8 +17,26 @@ policies:
 
     [FSBP EKS.2, oldestVersionSupported=1.33]
 
+
+    The `version not-null` guard is there because `value_type: version` does
+
+    NOT tolerate an absent key: c7n builds a ComparableVersion out of None
+
+    and raises AttributeError, aborting the account/region invocation
+
+    instead of skipping the one cluster. DescribeCluster always returns
+
+    `version` for a cluster that finished creating, so a cluster arriving
+
+    here without one is an anomaly -- the guard makes it invisible to this
+
+    control rather than fatal to the whole run.
+
     '
   filters:
+  - type: value
+    key: version
+    value: not-null
   - type: value
     key: version
     value_type: version
@@ -80,7 +98,7 @@ policies:
   filters:
   - not:
     - type: value
-      key: logging.clusterLogging[?contains(types, 'audit') && enabled].types[][]
+      key: logging.clusterLogging[?types && contains(types, 'audit') && enabled].types[][]
       value: not-null
 - name: eks-nodegroup-unsupported-kubernetes-version
   resource: aws.eks-nodegroup
@@ -103,8 +121,18 @@ policies:
 
     [FSBP EKS.9, oldestVersionSupported=1.33]
 
+
+    Same `version not-null` guard as the cluster-level control: a node group
+
+    with no `version` would raise AttributeError inside ComparableVersion
+
+    and take the account''s whole run down with it.
+
     '
   filters:
+  - type: value
+    key: version
+    value: not-null
   - type: value
     key: version
     value_type: version

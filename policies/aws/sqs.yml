@@ -16,6 +16,27 @@ policies:
 
     own accounts dominates the output and buries the genuinely external grants.
 
+
+    A QUEUE WITH NO `Policy` ATTRIBUTE IS NOT A GAP HERE, and no `absent` branch
+
+    belongs on this filter. `Policy` is optional in GetQueueAttributes and comes
+
+    back only when a resource policy exists; a queue without one is reachable
+
+    solely through IAM in the owning account, which is the secure default and
+
+    exactly what this control wants to see. Nor does the "we could not read it"
+
+    case reach the filter: c7n''s `DescribeQueue.augment` DROPS a queue whose
+
+    GetQueueAttributes returned AccessDenied instead of yielding it with the
+
+    attribute missing, so an unreadable queue never arrives as a silent pass --
+
+    it does not arrive at all. That is a coverage gap to audit at the run level,
+
+    not a finding this policy can express.
+
     '
   filters:
   - type: cross-account
@@ -43,11 +64,24 @@ policies:
 
     STRING "true"/"false", not a boolean -- hence `value: "false"` quoted.
 
-    The attribute is populated on every queue, so there is no absent case to
+    `KmsMasterKeyId` is simply missing when no customer key is configured,
 
-    guard here; `KmsMasterKeyId`, by contrast, is simply missing when no
+    which is why that half uses `value: absent`.
 
-    customer key is configured, which is why that half uses `value: absent`.
+
+    THE SECOND HALF NEEDS ITS OWN `absent` BRANCH, contrary to what this
+
+    description used to claim. SQS returns `SqsManagedSseEnabled` on queues
+
+    that have the setting; a queue predating SSE-SQS returns neither that
+
+    attribute nor `KmsMasterKeyId`, and that combination is a queue with no
+
+    encryption at all AND no attribute to prove it either way. The unquoted
+
+    `value: "false"` alone did not match it, so the least encrypted queue in
+
+    the account was the one this control reported as clean.
 
 
     Does not duplicate `sqs-queue-external-access`: that control is about who
@@ -61,6 +95,10 @@ policies:
   - type: value
     key: KmsMasterKeyId
     value: absent
-  - type: value
-    key: SqsManagedSseEnabled
-    value: 'false'
+  - or:
+    - type: value
+      key: SqsManagedSseEnabled
+      value: 'false'
+    - type: value
+      key: SqsManagedSseEnabled
+      value: absent

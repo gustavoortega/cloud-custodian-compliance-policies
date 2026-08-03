@@ -38,19 +38,31 @@ policies:
 
     tampered or deleted log file leaves no digitally-signed digest to detect
 
-    the tampering. `LogFileValidationEnabled` is a real boolean that the API
+    the tampering. `LogFileValidationEnabled` is optional in the DescribeTrails
 
-    always returns, so this is a direct `value: false` check with no absence
+    response, NOT guaranteed as this description previously claimed, and it
 
-    guard.
+    defaults to false: validation is something you turn ON. So an absent value
+
+    is not a hole in the answer, it IS the answer, and it is the same one an
+
+    explicit false gives. Without the `or` those trails were counted as
+
+    validated, because `None == False` is False in Python -- the quietest way
+
+    for a trail with no integrity digest to look like one that has it.
 
     '
   filters:
   - type: is-shadow
     state: false
-  - type: value
-    key: LogFileValidationEnabled
-    value: false
+  - or:
+    - type: value
+      key: LogFileValidationEnabled
+      value: false
+    - type: value
+      key: LogFileValidationEnabled
+      value: absent
 - name: cloudtrail-not-integrated-with-cloudwatch-logs
   resource: aws.cloudtrail
   metadata:

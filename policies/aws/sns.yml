@@ -16,12 +16,49 @@ policies:
 
     overly open policies, so they are worth checking first.
 
+
+    A TOPIC WITH NO `Policy` ATTRIBUTE IS REPORTED, and that is where this
+
+    policy differs from its SQS twin. `CrossAccountAccessFilter.__call__`
+
+    returns False outright when the policy attribute is missing, so absence
+
+    reads exactly like "checked, nothing external" -- and here it cannot be
+
+    that. SNS assigns every topic a default access policy at creation and
+
+    GetTopicAttributes always returns `Policy`; there is no such thing as an
+
+    SNS topic without one. Its absence therefore means the attribute set was
+
+    never assembled for that topic, which is unverified, not clean.
+
+
+    The SQS control in this repo deliberately does NOT carry this branch:
+
+    there `Policy` is optional by design and its absence is a real answer
+
+    (no resource policy at all). Same filter, opposite treatment, because the
+
+    two APIs make opposite promises about the field.
+
+
+    A row from the second branch carries no `c7n:CrossAccountViolations`
+
+    annotation -- there was no document to walk. Read it as "this topic was
+
+    not evaluated", not as a confirmed external grant.
+
     '
   filters:
-  - type: cross-account
-    whitelist_orgids:
-    - o-exampleorg1
-    whitelist:
-    - '111111111111'
-    - '222222222222'
-    - '333333333333'
+  - or:
+    - type: cross-account
+      whitelist_orgids:
+      - o-exampleorg1
+      whitelist:
+      - '111111111111'
+      - '222222222222'
+      - '333333333333'
+    - type: value
+      key: Policy
+      value: absent

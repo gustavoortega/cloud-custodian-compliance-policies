@@ -189,15 +189,24 @@ def test_s3_acl_used_for_access():
                  'Permission': 'FULL_CONTROL'},
                 {'Grantee': {'Type': 'Group', 'URI': LOG_DELIVERY},
                  'Permission': 'WRITE'}]}},
-        # KNOWN LIMITATION: with no Acl key, `unique_size`/`size` fall back to 0
-        # and neither branch fires, so a bucket whose ACL never came back is
-        # reported as compliant.
+        # covered by the third branch. With no Acl key `unique_size`/`size`
+        # both fall back to 0, below both thresholds, so this bucket used to
+        # score exactly like one carrying nothing but the owner grant. Every
+        # bucket HAS an ACL, so absent is never "no grants".
         {'Name': 'key-absent'},
+        # an AccessDenied reading the ACL is EXCLUDED rather than counted --
+        # the same call inventory-s3-insecure-transport makes for the bucket
+        # policy. Not being able to look is not evidence of a grant.
+        {'Name': 'denied', 'c7n:DeniedMethods': ['get_bucket_acl']},
+        # denied on something else entirely: no explanation for the missing
+        # ACL, so it still reports.
+        {'Name': 'denied-elsewhere', 'c7n:DeniedMethods': ['get_bucket_logging']},
     ]
     matched = [r['Name'] for r in run_policy(
         POLICIES, 's3-acl-used-for-access', resources)]
     # `or` merges branches through a set of ids: sort for a stable assertion.
-    assert sorted(matched) == ['matches-canonical', 'matches-group']
+    assert sorted(matched) == ['denied-elsewhere', 'key-absent',
+                               'matches-canonical', 'matches-group']
 
 
 def test_s3_lifecycle_configuration_missing():

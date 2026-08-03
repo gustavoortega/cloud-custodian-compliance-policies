@@ -241,8 +241,30 @@ policies:
 
     string before the key path is applied.
 
+
+    The `ReplicationTaskSettings present` guard in front of the `or` is not
+
+    optional: `from_json()` rejects a null with a jmespath type error, which
+
+    aborts the whole account/region invocation rather than skipping the one
+
+    task. A task whose settings string never came back is therefore NOT
+
+    reported by this control -- its logging state is unknown, not verified.
+
+    `present` and not `not-null` deliberately: a settings string that is
+
+    there but unparseable is not a crash (from_json swallows the JSON decode
+
+    error and returns None), and the `absent` branches below already report
+
+    that task. Tightening the guard to `not-null` would silently drop it.
+
     '
   filters:
+  - type: value
+    key: ReplicationTaskSettings
+    value: present
   - or:
     - type: value
       key: from_json(ReplicationTaskSettings).Logging.EnableLogging
@@ -270,10 +292,19 @@ policies:
 
     components are not configured (logging for the source side is off).
 
-    Same `from_json()` parsing rationale as the target-side control above.
+    Same `from_json()` parsing rationale as the target-side control above,
+
+    and the same `ReplicationTaskSettings present` guard: without it a task
+
+    with no settings string raises inside from_json() and takes the account
+
+    down with it.
 
     '
   filters:
+  - type: value
+    key: ReplicationTaskSettings
+    value: present
   - or:
     - type: value
       key: from_json(ReplicationTaskSettings).Logging.EnableLogging

@@ -2,14 +2,37 @@
 
 Offline: no AWS credentials, no network.
 
-Every test asserts the REAL behaviour of the policy as written, including the
-cases where a resource that is missing the key escapes the filter (or, in a
-couple of these, is over-reported because of it). Those are marked with a
-`# KNOWN LIMITATION` comment. Nothing here fixes a policy.
+Every test asserts the REAL behaviour of the policy as written. Most of this
+file's absent-key cases went the OVER-reporting way rather than the usual
+under-reporting one (`op: not-equal` and `op: not-in` are both True against a
+missing key, and `value_type: size` turns one into 0), so the corrections here
+mostly add a `present` / `not-null` guard on the key that DECIDES, and leave
+the keys that only SCOPE a rule alone.
+
+Where the escape is deliberate, the fixture says why. Where it was a bug, the
+test runs `verify_mutation` to prove the assertion depends on the guard.
 """
-from c7n_kit.testing import run_policy
+import pytest
+
+from c7n_kit.testing import FilterNeedsNetwork, run_policy, verify_mutation
 
 POLICIES = 'policies/aws/elb.yml'
+
+
+def drop_filter(index):
+    """Mutation factory: remove `filters[index]`, i.e. the guard under test."""
+    def mutate(policy):
+        del policy['filters'][index]
+        return policy
+    return mutate
+
+
+def drop_guard_in_and(index):
+    """Same, for a guard that lives inside the leading `and` group."""
+    def mutate(policy):
+        del policy['filters'][0]['and'][index]
+        return policy
+    return mutate
 
 
 def ids(matched, key='LoadBalancerName'):
@@ -62,9 +85,14 @@ def test_elb_classic_listener_not_tls():
             listener('HTTPS', ACM_CERT), listener('HTTP')]},
         {'LoadBalancerName': 'clean', 'ListenerDescriptions': [listener('HTTPS', ACM_CERT)]},
         {'LoadBalancerName': 'clean-ssl', 'ListenerDescriptions': [listener('SSL', ACM_CERT)]},
-        # KNOWN LIMITATION: an absent (or empty) ListenerDescriptions fails
-        # the first `not-null` guard, so a load balancer whose listeners
-        # never came back is reported as compliant.
+        # DELIBERATE, and left alone: an absent or empty ListenerDescriptions
+        # fails the `not-null` guard and is not reported. A load balancer
+        # with no listener is not serving anything in the clear, which is
+        # what this control measures -- widening it would report a load
+        # balancer that has no plaintext listener BECAUSE it has no listener.
+        # DescribeLoadBalancers returns ListenerDescriptions for every
+        # classic LB (empty list when there are none), so the absent-key
+        # variant is not reachable either.
         {'LoadBalancerName': 'empty-listeners', 'ListenerDescriptions': []},
         {'LoadBalancerName': 'key-absent'},
     ]
@@ -92,51 +120,90 @@ def test_elb_classic_single_az():
     resources = [
         {'LoadBalancerName': 'matches', 'AvailabilityZones': ['us-east-1a']},
         {'LoadBalancerName': 'clean', 'AvailabilityZones': ['us-east-1a', 'us-east-1b']},
-        # KNOWN LIMITATION (over-reporting, not under-reporting): with
-        # `value_type: size` an absent key resolves to size 0, and 0 < 2 is
-        # True, so a load balancer whose AvailabilityZones never came back
-        # is reported as single-AZ. The empty list behaves the same way.
-        {'LoadBalancerName': 'empty-list-matches', 'AvailabilityZones': []},
-        {'LoadBalancerName': 'key-absent-matches'},
+        # The correction here runs the OTHER way: with `value_type: size` an
+        # absent key resolves to length 0, and 0 < 2 matched, so both of
+        # these were reported as single-AZ on missing data. A load balancer
+        # cannot live in zero AZs, so the `not-null` guard now excludes them.
+        {'LoadBalancerName': 'empty-list', 'AvailabilityZones': []},
+        {'LoadBalancerName': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'elb-classic-single-az', resources))
-    assert matched == ['matches', 'empty-list-matches', 'key-absent-matches']
+
+    def expected(matched):
+        assert ids(matched) == ['matches']
+
+    expected(run_policy(POLICIES, 'elb-classic-single-az', resources))
+    verify_mutation(POLICIES, 'elb-classic-single-az', resources,
+                    mutate=drop_filter(0), assertions=expected)
 
 
-def test_elb_classic_desync_mitigation_not_recommended():
-    def attrs(mode):
-        return {'Attributes': {'AdditionalAttributes': [
-            {'Key': 'elb.http.desyncmitigationmode', 'Value': mode}]}}
+def test_elb_classic_desync_mitigation_not_recommended_needs_the_attributes_call():
+    """This one cannot be judged from DescribeLoadBalancers, and now says so.
 
+    The policy used to read `Attributes.AdditionalAttributes[...]` with a
+    plain `type: value` filter. DescribeLoadBalancers never returns
+    `Attributes` -- they come from DescribeLoadBalancerAttributes -- and
+    `op: not-in` against a missing key is True, so it reported EVERY classic
+    load balancer, always, on data that was never fetched. No `absent`
+    branch fixes that; the data has to be fetched.
+
+    It now uses c7n's `attributes` filter, which makes that call, exactly
+    like the ALB sibling. The offline cost is this test: the filter reaches
+    for a client before it evaluates anything, so the kit refuses it with
+    FilterNeedsNetwork instead of returning a result nobody measured. That
+    is the assertion -- a green "no findings" here would be the same lie the
+    policy used to tell in the other direction.
+    """
     resources = [
-        dict({'LoadBalancerName': 'matches'}, **attrs('monitor')),
-        dict({'LoadBalancerName': 'clean-defensive'}, **attrs('defensive')),
-        dict({'LoadBalancerName': 'clean-strictest'}, **attrs('strictest')),
-        # KNOWN LIMITATION (over-reporting): `op: not-in` against an absent
-        # key is True (None is in no list), so every load balancer whose
-        # Attributes block is missing is reported. DescribeLoadBalancers
-        # does not return Attributes at all -- they come from a separate
-        # DescribeLoadBalancerAttributes call -- so in a real run this
-        # filter flags classic ELBs on missing data rather than on a bad
-        # desync mode.
-        {'LoadBalancerName': 'attributes-absent-matches'},
+        {'LoadBalancerName': 'http-lb',
+         'ListenerDescriptions': [listener('HTTP')],
+         # Even with the attribute block already in the fixture: the filter
+         # builds the client up front, so there is no offline path.
+         'Attributes': {'AdditionalAttributes': [
+             {'Key': 'elb.http.desyncmitigationmode', 'Value': 'monitor'}]}},
     ]
-    matched = ids(run_policy(
-        POLICIES, 'elb-classic-desync-mitigation-not-recommended', resources))
-    assert matched == ['matches', 'attributes-absent-matches']
+    with pytest.raises(FilterNeedsNetwork):
+        run_policy(POLICIES, 'elb-classic-desync-mitigation-not-recommended',
+                   resources)
+
+
+def test_elb_classic_desync_mitigation_skips_l4_only_load_balancers():
+    """The listener guard runs first, and a TCP/SSL-only classic LB never
+    reaches the attributes call: it has no HTTP layer to smuggle through.
+    That is the same scoping the ALB policy needed (`Type: application`)
+    after it matched every NLB on the absent branch alone.
+    """
+    resources = [
+        {'LoadBalancerName': 'tcp-only', 'ListenerDescriptions': [
+            listener('TCP', port=3306)]},
+        {'LoadBalancerName': 'ssl-only', 'ListenerDescriptions': [
+            listener('SSL', ACM_CERT)]},
+        {'LoadBalancerName': 'no-listeners', 'ListenerDescriptions': []},
+    ]
+    # No FilterNeedsNetwork: the guard empties the set before the attributes
+    # filter is reached, which is also what keeps the extra API call off the
+    # load balancers this control does not apply to.
+    assert run_policy(
+        POLICIES, 'elb-classic-desync-mitigation-not-recommended', resources) == []
 
 
 def test_clb_internet_facing():
     resources = [
         {'LoadBalancerName': 'matches', 'Scheme': 'internet-facing'},
         {'LoadBalancerName': 'clean', 'Scheme': 'internal'},
-        # KNOWN LIMITATION (over-reporting): `op: not-equal` against an
-        # absent key is True, so a load balancer whose Scheme never came
-        # back is reported as internet-facing.
-        {'LoadBalancerName': 'key-absent-matches'},
+        # `op: not-equal` against an absent key is True, so this used to be
+        # inventoried as internet-facing without the field ever arriving.
+        # The `present` guard drops it. (Scheme is documented as "valid only
+        # for load balancers in a VPC": the absence was real on EC2-Classic,
+        # which is retired.)
+        {'LoadBalancerName': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'clb-internet-facing', resources))
-    assert matched == ['matches', 'key-absent-matches']
+
+    def expected(matched):
+        assert ids(matched) == ['matches']
+
+    expected(run_policy(POLICIES, 'clb-internet-facing', resources))
+    verify_mutation(POLICIES, 'clb-internet-facing', resources,
+                    mutate=drop_guard_in_and(0), assertions=expected)
 
 
 def test_inventory_clb_with_tls():
@@ -166,12 +233,18 @@ def test_elbv2_single_az():
         {'LoadBalancerArn': 'arn-matches', 'AvailabilityZones': az('us-east-1a')},
         {'LoadBalancerArn': 'arn-clean',
          'AvailabilityZones': az('us-east-1a', 'us-east-1b')},
-        # KNOWN LIMITATION (over-reporting): same `value_type: size`
-        # coercion as the classic case, an absent key resolves to 0 < 2.
-        {'LoadBalancerArn': 'arn-key-absent-matches'},
+        # Same `value_type: size` coercion as the classic case: an absent key
+        # resolved to 0 < 2 and was reported. Excluded by the `not-null`
+        # guard now.
+        {'LoadBalancerArn': 'arn-key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'elbv2-single-az', resources), 'LoadBalancerArn')
-    assert matched == ['arn-matches', 'arn-key-absent-matches']
+
+    def expected(matched):
+        assert ids(matched, 'LoadBalancerArn') == ['arn-matches']
+
+    expected(run_policy(POLICIES, 'elbv2-single-az', resources))
+    verify_mutation(POLICIES, 'elbv2-single-az', resources,
+                    mutate=drop_filter(0), assertions=expected)
 
 
 def test_alb_and_nlb_internet_facing():
@@ -179,13 +252,18 @@ def test_alb_and_nlb_internet_facing():
         {'LoadBalancerArn': 'arn-matches', 'Scheme': 'internet-facing',
          'Type': 'application'},
         {'LoadBalancerArn': 'arn-clean', 'Scheme': 'internal', 'Type': 'application'},
-        # KNOWN LIMITATION (over-reporting): `op: not-equal` against an
-        # absent Scheme is True.
-        {'LoadBalancerArn': 'arn-key-absent-matches', 'Type': 'network'},
+        # `op: not-equal` against an absent Scheme is True; the `present`
+        # guard is what stops the rule concluding "internet-facing" from a
+        # field that never arrived.
+        {'LoadBalancerArn': 'arn-key-absent', 'Type': 'network'},
     ]
-    matched = ids(run_policy(POLICIES, 'alb-and-nlb-internet-facing', resources),
-                  'LoadBalancerArn')
-    assert matched == ['arn-matches', 'arn-key-absent-matches']
+
+    def expected(matched):
+        assert ids(matched, 'LoadBalancerArn') == ['arn-matches']
+
+    expected(run_policy(POLICIES, 'alb-and-nlb-internet-facing', resources))
+    verify_mutation(POLICIES, 'alb-and-nlb-internet-facing', resources,
+                    mutate=drop_guard_in_and(0), assertions=expected)
 
 
 # ----------------------------------------------- aws.app-elb-target-group ---
@@ -198,15 +276,26 @@ def test_elbv2_target_group_healthcheck_not_encrypted():
          'HealthCheckProtocol': 'HTTPS'},
         {'TargetGroupArn': 'arn-lambda-excluded', 'TargetType': 'lambda',
          'HealthCheckProtocol': 'HTTP'},
-        # KNOWN LIMITATION (over-reporting): both filters use `op:
-        # not-equal`, and None never equals anything, so a target group
-        # missing both keys is reported on missing data.
-        {'TargetGroupArn': 'arn-key-absent-matches'},
+        # `op: not-equal` is True against a missing key, so this used to be
+        # reported for having no health check protocol at all. A Lambda
+        # target group with health checks disabled is exactly that shape,
+        # and it is the case the control excludes: the `present` guard now
+        # requires the deciding key to have arrived.
+        {'TargetGroupArn': 'arn-healthcheck-absent', 'TargetType': 'lambda'},
+        {'TargetGroupArn': 'arn-key-absent'},
+        # TargetType only SCOPES the rule, so it stays unguarded: an HTTP
+        # health check is a finding whether or not the type came back.
+        {'TargetGroupArn': 'arn-targettype-absent', 'HealthCheckProtocol': 'HTTP'},
     ]
-    matched = ids(run_policy(
-        POLICIES, 'elbv2-target-group-healthcheck-not-encrypted', resources),
-        'TargetGroupArn')
-    assert matched == ['arn-matches', 'arn-key-absent-matches']
+
+    def expected(matched):
+        assert ids(matched, 'TargetGroupArn') == ['arn-matches', 'arn-targettype-absent']
+
+    expected(run_policy(POLICIES, 'elbv2-target-group-healthcheck-not-encrypted',
+                        resources))
+    verify_mutation(
+        POLICIES, 'elbv2-target-group-healthcheck-not-encrypted', resources,
+        mutate=drop_filter(1), assertions=expected)
 
 
 def test_elbv2_target_group_protocol_not_encrypted():
@@ -220,12 +309,22 @@ def test_elbv2_target_group_protocol_not_encrypted():
         {'TargetGroupArn': 'arn-alb-excluded', 'TargetType': 'alb', 'Protocol': 'HTTP'},
         {'TargetGroupArn': 'arn-geneve-excluded', 'TargetType': 'instance',
          'Protocol': 'GENEVE'},
-        # KNOWN LIMITATION (over-reporting): `not-in` / `not-equal` against
-        # absent keys are all True, so a target group missing both keys is
-        # reported on missing data.
-        {'TargetGroupArn': 'arn-key-absent-matches'},
+        # `not-in` and `not-equal` are both True against a missing key, so
+        # these were reported for having no protocol. DescribeTargetGroups
+        # returns no Protocol for a Lambda target group AT ALL: the rule was
+        # flagging "unencrypted" the target groups with nothing to encrypt.
+        {'TargetGroupArn': 'arn-protocol-absent', 'TargetType': 'lambda'},
+        {'TargetGroupArn': 'arn-key-absent'},
+        # TargetType only scopes the rule; an HTTP protocol is a finding
+        # whether or not the type came back.
+        {'TargetGroupArn': 'arn-targettype-absent', 'Protocol': 'HTTP'},
     ]
-    matched = ids(run_policy(
-        POLICIES, 'elbv2-target-group-protocol-not-encrypted', resources),
-        'TargetGroupArn')
-    assert matched == ['arn-matches', 'arn-key-absent-matches']
+
+    def expected(matched):
+        assert ids(matched, 'TargetGroupArn') == ['arn-matches', 'arn-targettype-absent']
+
+    expected(run_policy(POLICIES, 'elbv2-target-group-protocol-not-encrypted',
+                        resources))
+    verify_mutation(
+        POLICIES, 'elbv2-target-group-protocol-not-encrypted', resources,
+        mutate=drop_filter(1), assertions=expected)

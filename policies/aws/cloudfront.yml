@@ -133,6 +133,13 @@ policies:
 
     '
   filters:
+  # Guard first: length(null) raises and takes the whole account's run with
+  # it, not just this distribution. A distribution must have an origin, so
+  # this should never fire; it is here because "should never" is how the
+  # other three in this file were also written.
+  - type: value
+    key: Origins.Items
+    value: not-null
   - type: value
     key: length(Origins.Items[?CustomOriginConfig])
     value: 0
@@ -202,7 +209,7 @@ policies:
     '
   filters:
   - type: distribution-config
-    key: length((OriginGroups.Items || `[]`)[?length(Members.Items) >= `2`])
+    key: length((OriginGroups.Items || `[]`)[?length(Members.Items || `[]`) >= `2`])
     value: 0
 - name: cloudfront-distribution-logging-disabled
   resource: aws.distribution
@@ -281,8 +288,24 @@ policies:
 
     per-distribution ticket queue.
 
+
+    The `Origins.Items not-null` guard comes first because `length(null)`
+
+    RAISES: a distribution whose summary came back without Origins would
+
+    abort the entire account/region invocation, which is worse than any
+
+    single missed distribution. The guard costs no coverage -- an absent or
+
+    empty origin list has no custom origin to be unencrypted -- but it does
+
+    put a distribution with no Origins out of this control''s scope.
+
     '
   filters:
+  - type: value
+    key: Origins.Items
+    value: not-null
   - type: value
     key: length(Origins.Items[?CustomOriginConfig])
     op: greater-than
@@ -325,8 +348,20 @@ policies:
 
     METRIC, not a per-distribution ticket queue.
 
+
+    Same `Origins.Items not-null` guard as CloudFront.9: `length(null)` on a
+
+    distribution with no Origins raises a jmespath type error and kills the
+
+    whole invocation for the account. No S3 origin means nothing to report
+
+    here anyway.
+
     '
   filters:
+  - type: value
+    key: Origins.Items
+    value: not-null
   - type: value
     key: length(Origins.Items[?S3OriginConfig])
     op: greater-than
@@ -398,9 +433,21 @@ policies:
 
     distinguishes it from any other custom origin at the config level.
 
+
+    Same `Origins.Items not-null` guard as the two controls above: without
+
+    it, one distribution with no Origins makes `length(null)` raise and the
+
+    account stops reporting entirely -- which on a 4h/high control is the
+
+    most expensive way to lose coverage.
+
     '
   filters:
   - type: value
-    key: length(Origins.Items[?contains(DomainName, '.lambda-url.') && !OriginAccessControlId])
+    key: Origins.Items
+    value: not-null
+  - type: value
+    key: length(Origins.Items[?DomainName && contains(DomainName, '.lambda-url.') && !OriginAccessControlId])
     op: greater-than
     value: 0

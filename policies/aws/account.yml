@@ -678,14 +678,43 @@ policies:
 
     22-to-22.
 
+
+    `PermittedPublicSecurityGroupRuleRanges` is optional in the EMR API
+
+    model (only `BlockPublicSecurityGroupRules` is a required member of
+
+    `GetBlockPublicAccessConfiguration`''s response), and `length(null)`
+
+    RAISES, which would abort the whole account/region invocation. The
+
+    `not-null` guard is INSIDE the second branch, paired with the count in
+
+    an `and`, and deliberately not in front of the `or`: an account with
+
+    block-public-access switched off is the finding this control exists
+
+    for, and that is exactly the account whose response is most likely to
+
+    carry no permitted-range list, so a guard at the top would have
+
+    silenced the critical case instead of the crash. The list is an
+
+    allow-list, so no list means nothing is permitted through -- the safest
+
+    state, never a finding on its own.
+
     '
   filters:
   - or:
     - type: emr-block-public-access
       key: BlockPublicAccessConfiguration.BlockPublicSecurityGroupRules
       value: false
-    - type: emr-block-public-access
-      key: length(BlockPublicAccessConfiguration.PermittedPublicSecurityGroupRuleRanges[?MinRange != `22`
-        || MaxRange != `22`])
-      op: gt
-      value: 0
+    - and:
+      - type: emr-block-public-access
+        key: BlockPublicAccessConfiguration.PermittedPublicSecurityGroupRuleRanges
+        value: not-null
+      - type: emr-block-public-access
+        key: length(BlockPublicAccessConfiguration.PermittedPublicSecurityGroupRuleRanges[?MinRange
+          != `22` || MaxRange != `22`])
+        op: gt
+        value: 0

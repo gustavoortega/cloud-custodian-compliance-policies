@@ -119,14 +119,39 @@ policies:
 
     `lt` comparison.
 
+
+    The `absent` branch alone was not enough, though, and for a reason that
+
+    is easy to miss: `or` runs EVERY branch over the FULL resource list, so
+
+    the job the absent branch was meant to catch also reached the
+
+    `value_type: version` branch, where ComparableVersion(None) raises
+
+    AttributeError and aborts the whole account/region invocation. Hence the
+
+    `not-null` guard AND-ed in front of the comparison: `and` filters
+
+    sequentially, so the version comparison only ever sees jobs that have a
+
+    GlueVersion. The job with no GlueVersion is still reported, through the
+
+    absent branch -- the guard changes nothing about what this control
+
+    finds, only that it now survives the finding.
+
     '
   filters:
   - or:
     - type: value
       key: GlueVersion
       value: absent
-    - type: value
-      key: GlueVersion
-      op: lt
-      value: '3.0'
-      value_type: version
+    - and:
+      - type: value
+        key: GlueVersion
+        value: not-null
+      - type: value
+        key: GlueVersion
+        op: lt
+        value: '3.0'
+        value_type: version

@@ -18,40 +18,43 @@ def test_r53domain_transfer_lock_disabled():
     resources = [
         {'DomainName': 'matches.example', 'TransferLock': False, 'AutoRenew': True},
         {'DomainName': 'clean.example', 'TransferLock': True, 'AutoRenew': True},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch. A domain
-        # whose TransferLock field never came back is None == False -> False,
-        # so it is reported as compliant.
+        # covered: the policy carries the explicit `absent` branch. Without it
+        # `None == False` is False and a domain AWS never described would be
+        # reported as locked.
         {'DomainName': 'key-absent.example', 'AutoRenew': True},
     ]
-    matched = [r['DomainName'] for r in run_policy(
-        POLICIES, 'r53domain-transfer-lock-disabled', resources)]
-    assert matched == ['matches.example']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['DomainName'] for r in run_policy(
+        POLICIES, 'r53domain-transfer-lock-disabled', resources))
+    assert matched == ['key-absent.example', 'matches.example']
 
 
 def test_r53domain_autorenew_disabled():
     resources = [
         {'DomainName': 'matches.example', 'AutoRenew': False, 'TransferLock': True},
         {'DomainName': 'clean.example', 'AutoRenew': True, 'TransferLock': True},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch, same
-        # shape as the transfer-lock control.
+        # covered: the policy carries the explicit `absent` branch, same shape
+        # as the transfer-lock control.
         {'DomainName': 'key-absent.example', 'TransferLock': True},
     ]
-    matched = [r['DomainName'] for r in run_policy(
-        POLICIES, 'r53domain-autorenew-disabled', resources)]
-    assert matched == ['matches.example']
+    matched = sorted(r['DomainName'] for r in run_policy(
+        POLICIES, 'r53domain-autorenew-disabled', resources))
+    assert matched == ['key-absent.example', 'matches.example']
 
 
 def test_r53domain_expiring_90d():
     resources = [
         {'DomainName': 'matches.example', 'Expiry': '2020-01-01T00:00:00Z'},
         {'DomainName': 'clean.example', 'Expiry': '2099-01-01T00:00:00Z'},
-        # KNOWN LIMITATION: an absent Expiry resolves to None and the
-        # expiration comparison never matches, so it reads as compliant.
+        # covered by the SECOND branch of the `or`, not by the comparison: an
+        # absent Expiry makes `value_type: expiration` raise TypeError inside
+        # c7n, which swallows it as "no match", so only a separate filter
+        # reaches it.
         {'DomainName': 'key-absent.example'},
     ]
-    matched = [r['DomainName'] for r in run_policy(
-        POLICIES, 'r53domain-expiring-90d', resources)]
-    assert matched == ['matches.example']
+    matched = sorted(r['DomainName'] for r in run_policy(
+        POLICIES, 'r53domain-expiring-90d', resources))
+    assert matched == ['key-absent.example', 'matches.example']
 
 
 def test_inventory_hosted_zones():
@@ -60,14 +63,13 @@ def test_inventory_hosted_zones():
          'Config': {'PrivateZone': False}},
         {'Id': '/hostedzone/PRIVATE', 'Name': 'internal.example.',
          'Config': {'PrivateZone': True}},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch. A zone
-        # whose Config block never came back is left out of the inventory
-        # instead of being listed as public.
+        # covered: PrivateZone is optional and defaults to false, so a zone
+        # with no Config block is public and belongs in the inventory.
         {'Id': '/hostedzone/KEYABSENT', 'Name': 'unknown.example.'},
     ]
-    matched = [r['Id'] for r in run_policy(
-        POLICIES, 'inventory-hosted-zones', resources)]
-    assert matched == ['/hostedzone/MATCHES']
+    matched = sorted(r['Id'] for r in run_policy(
+        POLICIES, 'inventory-hosted-zones', resources))
+    assert matched == ['/hostedzone/KEYABSENT', '/hostedzone/MATCHES']
 
 
 def test_inventory_hosted_zones_records():

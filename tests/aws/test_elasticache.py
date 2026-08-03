@@ -42,14 +42,19 @@ def test_elasticache_replication_group_no_auth():
         {'ReplicationGroupId': 'clean-token', 'AuthTokenEnabled': True},
         {'ReplicationGroupId': 'clean-rbac', 'AuthTokenEnabled': False,
          'UserGroupIds': ['user-group-1']},
-        # KNOWN LIMITATION: `value: false` on AuthTokenEnabled with no
-        # `absent` branch. A group missing the key is None == False -> False,
-        # so it is reported as compliant even though it has no auth at all.
+        # covered: AuthTokenEnabled is only true once a token is set, so
+        # absent says the same thing false does. With no UserGroupIds either,
+        # this is the group with NO credential of any kind.
         {'ReplicationGroupId': 'key-absent'},
+        # token key absent but RBAC configured: the second filter still
+        # clears it, so widening the first branch did not widen the control.
+        {'ReplicationGroupId': 'clean-rbac-no-token-key',
+         'UserGroupIds': ['user-group-2']},
     ]
-    matched = [r['ReplicationGroupId'] for r in run_policy(
-        POLICIES, 'elasticache-replication-group-no-auth', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['ReplicationGroupId'] for r in run_policy(
+        POLICIES, 'elasticache-replication-group-no-auth', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_elasticache_replication_group_backup_disabled():
@@ -122,10 +127,11 @@ def test_elasticache_cluster_default_subnet_group():
     resources = [
         {'CacheClusterId': 'matches', 'CacheSubnetGroupName': 'default'},
         {'CacheClusterId': 'clean', 'CacheSubnetGroupName': 'cache-private'},
-        # KNOWN LIMITATION: equality against the string "default", so a
-        # cluster whose subnet group name never came back is compliant.
+        # covered: leaving the subnet group unspecified is how a cluster ends
+        # up in the default group, so absence leans toward the matched
+        # condition, not away from it.
         {'CacheClusterId': 'key-absent'},
     ]
-    matched = [r['CacheClusterId'] for r in run_policy(
-        POLICIES, 'elasticache-cluster-default-subnet-group', resources)]
-    assert matched == ['matches']
+    matched = sorted(r['CacheClusterId'] for r in run_policy(
+        POLICIES, 'elasticache-cluster-default-subnet-group', resources))
+    assert matched == ['key-absent', 'matches']

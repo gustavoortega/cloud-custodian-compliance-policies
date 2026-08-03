@@ -35,14 +35,18 @@ def test_athena_workgroup_config_not_enforced():
          'Configuration': {'EnforceWorkGroupConfiguration': False}},
         {'Name': 'clean', 'State': 'ENABLED',
          'Configuration': {'EnforceWorkGroupConfiguration': True}},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch, so a work
-        # group whose EnforceWorkGroupConfiguration never came back is reported
-        # as compliant.
+        # covered: EnforceWorkGroupConfiguration defaults to false, so absent
+        # and false are the same finding.
         {'Name': 'key-absent', 'State': 'ENABLED', 'Configuration': {}},
+        # the whole Configuration block missing, same branch
+        {'Name': 'config-absent', 'State': 'ENABLED'},
+        # still scoped out by the State gate, absent field or not
+        {'Name': 'clean-disabled', 'State': 'DISABLED', 'Configuration': {}},
     ]
-    matched = [r['Name'] for r in run_policy(
-        POLICIES, 'athena-workgroup-config-not-enforced', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['Name'] for r in run_policy(
+        POLICIES, 'athena-workgroup-config-not-enforced', resources))
+    assert matched == ['config-absent', 'key-absent', 'matches']
 
 
 def test_athena_workgroup_logging_disabled():
@@ -51,10 +55,10 @@ def test_athena_workgroup_logging_disabled():
          'Configuration': {'PublishCloudWatchMetricsEnabled': False}},
         {'Name': 'clean', 'State': 'ENABLED',
          'Configuration': {'PublishCloudWatchMetricsEnabled': True}},
-        # KNOWN LIMITATION: `value: false` with no `absent` branch; a work group
-        # with no Configuration at all is read as compliant.
+        # covered: PublishCloudWatchMetricsEnabled defaults to false, and a
+        # work group with no Configuration at all was never verified either.
         {'Name': 'key-absent', 'State': 'ENABLED'},
     ]
-    matched = [r['Name'] for r in run_policy(
-        POLICIES, 'athena-workgroup-logging-disabled', resources)]
-    assert matched == ['matches']
+    matched = sorted(r['Name'] for r in run_policy(
+        POLICIES, 'athena-workgroup-logging-disabled', resources))
+    assert matched == ['key-absent', 'matches']

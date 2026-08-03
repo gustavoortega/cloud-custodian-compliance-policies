@@ -31,8 +31,14 @@ def test_sqs_queue_external_access():
          'Policy': _policy('clean-own', 'arn:aws:iam::000000000000:root')},
         {'QueueUrl': URL % 'clean-whitelisted',
          'Policy': _policy('clean-whitelisted', 'arn:aws:iam::111111111111:root')},
-        # KNOWN LIMITATION: a queue with no Policy attribute reads as compliant.
-        {'QueueUrl': URL % 'key-absent'},
+        # NOT a limitation, and left as is on purpose: `Policy` comes back
+        # from GetQueueAttributes only when a resource policy exists, so a
+        # queue without one is reachable through IAM in the owning account
+        # only -- the secure default, and a true negative. The "we could not
+        # read it" case never lands here either: c7n's DescribeQueue.augment
+        # DROPS a queue whose GetQueueAttributes returned AccessDenied rather
+        # than yielding it with the attribute missing.
+        {'QueueUrl': URL % 'clean-no-policy'},
     ]
     matched = [r['QueueUrl'] for r in run_policy(
         POLICIES, 'sqs-queue-external-access', resources)]
@@ -45,12 +51,18 @@ def test_sqs_queue_not_encrypted_at_rest():
         {'QueueUrl': URL % 'clean-sse-sqs', 'SqsManagedSseEnabled': 'true'},
         {'QueueUrl': URL % 'clean-kms', 'SqsManagedSseEnabled': 'false',
          'KmsMasterKeyId': 'alias/aws/sqs'},
-        # KNOWN LIMITATION: the second filter is `value: 'false'` with no
-        # `absent` branch, so a queue that returns neither KmsMasterKeyId nor
-        # SqsManagedSseEnabled -- i.e. no encryption at all, and no attribute
-        # to prove it -- is reported as compliant.
+        # covered: a queue returning neither KmsMasterKeyId nor
+        # SqsManagedSseEnabled has no encryption at all and no attribute to
+        # prove otherwise. It used to be the least encrypted queue in the
+        # account and the one this control called clean.
         {'QueueUrl': URL % 'key-absent'},
+        # a KMS key with the SSE attribute missing is still encrypted: the
+        # first filter clears it, so widening the second did not widen the
+        # control.
+        {'QueueUrl': URL % 'clean-kms-no-sse-key',
+         'KmsMasterKeyId': 'alias/aws/sqs'},
     ]
-    matched = [r['QueueUrl'] for r in run_policy(
-        POLICIES, 'sqs-queue-not-encrypted-at-rest', resources)]
-    assert matched == [URL % 'matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['QueueUrl'] for r in run_policy(
+        POLICIES, 'sqs-queue-not-encrypted-at-rest', resources))
+    assert matched == [URL % 'key-absent', URL % 'matches']

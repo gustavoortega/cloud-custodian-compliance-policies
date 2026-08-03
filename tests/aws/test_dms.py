@@ -22,9 +22,6 @@ processes.
 """
 import json
 
-import pytest
-from jmespath.exceptions import JMESPathTypeError
-
 from c7n_kit.testing import run_policy
 
 POLICIES = 'policies/aws/dms.yml'
@@ -62,6 +59,16 @@ def task(name, *, enable_logging=True, components=ALL_LOG_COMPONENTS,
         'ReplicationTaskArn': f'arn:aws:dms:us-east-1:111111111111:task:{name}',
         # comes back from the API as a JSON string, not a nested object
         'ReplicationTaskSettings': json.dumps({'Logging': logging}),
+    }
+
+
+def settingsless(name, **kw):
+    """A task whose ReplicationTaskSettings never came back (or came back
+    empty): the shape that used to abort the run inside from_json()."""
+    return {
+        'ReplicationTaskIdentifier': name,
+        'ReplicationTaskArn': f'arn:aws:dms:us-east-1:111111111111:task:{name}',
+        **kw,
     }
 
 
@@ -177,20 +184,24 @@ def test_dms_replication_task_target_logging_disabled():
              components=tuple(c for c in ALL_LOG_COMPONENTS if c != 'TARGET_APPLY')),
         # EnableLogging key itself missing -> caught by the `or: absent` branch
         task('enablelogging-absent', with_enable_logging=False),
+        # ReplicationTaskSettings missing entirely: the `present` guard drops
+        # the task before from_json(null) can raise and abort the invocation.
+        # Not reported -- its logging state is unknown, not verified.
+        settingsless('settings-absent'),
+        # a settings string that is there but unparseable is NOT a crash
+        # (from_json swallows the decode error and returns None) and stays
+        # reported through the `absent` branches -- which is why the guard is
+        # `present` and not `not-null`.
+        settingsless('settings-empty', ReplicationTaskSettings=''),
     ]
     assert matched('dms-replication-task-target-logging-disabled', resources,
                    'ReplicationTaskIdentifier') == [
-        'enablelogging-absent', 'logging-off', 'missing-component']
+        'enablelogging-absent', 'logging-off', 'missing-component',
+        'settings-empty']
 
-    # KNOWN LIMITATION: ReplicationTaskSettings missing entirely does not read
-    # as a finding, it RAISES -- from_json() rejects null. A task the field
-    # never came back for aborts the whole policy run rather than being
-    # reported or skipped.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'dms-replication-task-target-logging-disabled',
-                   [{'ReplicationTaskIdentifier': 'settings-absent',
-                     'ReplicationTaskArn':
-                         'arn:aws:dms:us-east-1:111111111111:task:settings-absent'}])
+    # and on its own it is a non-match, not an exception
+    assert run_policy(POLICIES, 'dms-replication-task-target-logging-disabled',
+                      [settingsless('settings-absent')]) == []
 
 
 def test_dms_replication_task_source_logging_disabled():
@@ -201,14 +212,14 @@ def test_dms_replication_task_source_logging_disabled():
              components=tuple(c for c in ALL_LOG_COMPONENTS if c != 'SOURCE_CAPTURE')),
         # caught by the `or: absent` branch
         task('enablelogging-absent', with_enable_logging=False),
+        # same `present` guard as the target-side control
+        settingsless('settings-absent'),
+        settingsless('settings-empty', ReplicationTaskSettings=''),
     ]
     assert matched('dms-replication-task-source-logging-disabled', resources,
                    'ReplicationTaskIdentifier') == [
-        'enablelogging-absent', 'logging-off', 'missing-component']
+        'enablelogging-absent', 'logging-off', 'missing-component',
+        'settings-empty']
 
-    # KNOWN LIMITATION: same from_json() crash as the target-side control.
-    with pytest.raises(JMESPathTypeError):
-        run_policy(POLICIES, 'dms-replication-task-source-logging-disabled',
-                   [{'ReplicationTaskIdentifier': 'settings-absent',
-                     'ReplicationTaskArn':
-                         'arn:aws:dms:us-east-1:111111111111:task:settings-absent'}])
+    assert run_policy(POLICIES, 'dms-replication-task-source-logging-disabled',
+                      [settingsless('settings-absent')]) == []

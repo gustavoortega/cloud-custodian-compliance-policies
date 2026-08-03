@@ -3,14 +3,31 @@
 Offline: no AWS credentials, no network.
 
 Every test asserts the REAL behaviour of the policy as written, including the
-cases where a resource that is missing the key escapes the filter. Those are
-marked with a `# KNOWN LIMITATION` comment. Nothing here fixes a policy.
+cases where a resource that is missing the key escapes the filter. Where that
+escape is DELIBERATE (the missing key is not evidence of the insecure state,
+or the key is the policy's scope rather than its condition) the fixture says
+so; where it was a bug, the policy now carries an `absent` branch and the test
+runs `verify_mutation` to prove the assertion depends on it.
 """
 from datetime import datetime, timedelta, timezone
 
-from c7n_kit.testing import run_policy
+from c7n_kit.testing import run_policy, verify_mutation
 
 POLICIES = 'policies/aws/ec2.yml'
+
+
+def drop_absent_branch(index):
+    """Mutation factory: strip the `absent` branch out of `filters[index]`.
+
+    The `or` at that position is the fix under test, so the assertions have
+    to go red once it is gone. `verify_mutation` raises if they do not.
+    """
+    def mutate(policy):
+        branch = policy['filters'][index]['or']
+        policy['filters'][index]['or'] = [
+            f for f in branch if f.get('value') != 'absent']
+        return policy
+    return mutate
 
 
 def ids(matched, key='InstanceId'):
@@ -99,16 +116,23 @@ def test_ec2_internet_facing_instance_profile_with_imdsv1():
          'IamInstanceProfile': {'Arn': 'arn:aws:iam::123456789012:instance-profile/app',
                                 'Id': 'AIPAEXAMPLE'},
          'MetadataOptions': {'HttpTokens': 'optional'}},
-        # KNOWN LIMITATION: an instance whose MetadataOptions block never came
-        # back reads as compliant (None == 'optional' is False).
+        # An instance whose MetadataOptions block never came back: `None ==
+        # 'optional'` is False, so without the `absent` branch it would read
+        # as compliant. `optional` is the AWS default, so it is reported.
         {'InstanceId': 'i-metadata-absent', 'State': {'Name': 'running'},
          'PublicIpAddress': '203.0.113.14',
          'IamInstanceProfile': {'Arn': 'arn:aws:iam::123456789012:instance-profile/app',
                                 'Id': 'AIPAEXAMPLE'}},
     ]
-    matched = ids(run_policy(
+
+    def expected(matched):
+        assert sids(matched) == ['i-matches', 'i-metadata-absent']
+
+    expected(run_policy(
         POLICIES, 'ec2-internet-facing-instance-profile-with-imdsv1', resources))
-    assert matched == ['i-matches']
+    verify_mutation(
+        POLICIES, 'ec2-internet-facing-instance-profile-with-imdsv1', resources,
+        mutate=drop_absent_branch(3), assertions=expected)
 
 
 def test_ec2_imdsv2_not_enforced():
@@ -119,11 +143,17 @@ def test_ec2_imdsv2_not_enforced():
          'MetadataOptions': {'HttpTokens': 'required', 'HttpEndpoint': 'enabled'}},
         {'InstanceId': 'i-stopped', 'State': {'Name': 'stopped'},
          'MetadataOptions': {'HttpTokens': 'optional'}},
-        # KNOWN LIMITATION: MetadataOptions absent reads as compliant.
+        # MetadataOptions absent: caught by the `absent` branch, not read as
+        # "IMDSv2 enforced".
         {'InstanceId': 'i-metadata-absent', 'State': {'Name': 'running'}},
     ]
-    matched = ids(run_policy(POLICIES, 'ec2-imdsv2-not-enforced', resources))
-    assert matched == ['i-matches']
+
+    def expected(matched):
+        assert sids(matched) == ['i-matches', 'i-metadata-absent']
+
+    expected(run_policy(POLICIES, 'ec2-imdsv2-not-enforced', resources))
+    verify_mutation(POLICIES, 'ec2-imdsv2-not-enforced', resources,
+                    mutate=drop_absent_branch(0), assertions=expected)
 
 
 def test_ec2_stopped_instance_not_removed():
@@ -264,14 +294,22 @@ def test_subnet_auto_assigns_public_ip_non_default_vpc():
         {'SubnetId': 'subnet-matches', 'MapPublicIpOnLaunch': True, 'DefaultForAz': False},
         {'SubnetId': 'subnet-clean', 'MapPublicIpOnLaunch': False, 'DefaultForAz': False},
         {'SubnetId': 'subnet-default-az', 'MapPublicIpOnLaunch': True, 'DefaultForAz': True},
-        # KNOWN LIMITATION: `DefaultForAz` absent does not satisfy the
-        # `value: false` guard, so a subnet missing that key escapes even
-        # though it auto-assigns public IPs.
+        # `DefaultForAz` absent used to fail the `value: false` EXCLUSION and
+        # take the subnet out of the policy entirely, even though it does
+        # auto-assign public IPs. The exclusion now carries an `absent`
+        # branch: a guard clause must not swallow the finding.
         {'SubnetId': 'subnet-defaultforaz-absent', 'MapPublicIpOnLaunch': True},
     ]
-    matched = ids(run_policy(
-        POLICIES, 'subnet-auto-assigns-public-ip-non-default-vpc', resources), 'SubnetId')
-    assert matched == ['subnet-matches']
+
+    def expected(matched):
+        assert sids(matched, 'SubnetId') == [
+            'subnet-defaultforaz-absent', 'subnet-matches']
+
+    expected(run_policy(
+        POLICIES, 'subnet-auto-assigns-public-ip-non-default-vpc', resources))
+    verify_mutation(
+        POLICIES, 'subnet-auto-assigns-public-ip-non-default-vpc', resources,
+        mutate=drop_absent_branch(1), assertions=expected)
 
 
 # -------------------------------------------------------- aws.network-acl ---
@@ -282,13 +320,23 @@ def test_nacl_unused_non_default():
         {'NetworkAclId': 'acl-clean-associated', 'IsDefault': False, 'Associations': [
             {'NetworkAclAssociationId': 'aclassoc-1', 'SubnetId': 'subnet-1'}]},
         {'NetworkAclId': 'acl-default', 'Associations': [], 'IsDefault': True},
-        # `Associations` absent is not equal to the empty list, so it escapes.
+        # `Associations` absent is not equal to the empty list, and it stays
+        # that way ON PURPOSE: that key is the EVIDENCE of the finding, and a
+        # key that never arrived is not proof the NACL is unassociated.
         {'NetworkAclId': 'acl-associations-absent', 'IsDefault': False},
-        # KNOWN LIMITATION: `IsDefault` absent does not satisfy `value: false`.
+        # `IsDefault` is the EXCLUSION, not the evidence. Absent used to fail
+        # `value: false` and drop a genuine orphan; it now has an `absent`
+        # branch.
         {'NetworkAclId': 'acl-isdefault-absent', 'Associations': []},
     ]
-    matched = ids(run_policy(POLICIES, 'nacl-unused-non-default', resources), 'NetworkAclId')
-    assert matched == ['acl-matches']
+
+    def expected(matched):
+        assert sids(matched, 'NetworkAclId') == [
+            'acl-isdefault-absent', 'acl-matches']
+
+    expected(run_policy(POLICIES, 'nacl-unused-non-default', resources))
+    verify_mutation(POLICIES, 'nacl-unused-non-default', resources,
+                    mutate=drop_absent_branch(1), assertions=expected)
 
 
 # ---------------------------------------------------- aws.transit-gateway ---
@@ -320,19 +368,45 @@ def test_vpn_tunnel_logging_disabled():
         {'VpnConnectionId': 'vpn-clean', 'Options': {'TunnelOptions': [
             {'OutsideIpAddress': '203.0.113.3',
              'LogOptions': {'CloudWatchLogOptions': {'LogEnabled': True}}}]}},
-        # An absent Options block IS caught by the `absent` branch: the
-        # jmespath expression resolves to None.
+        # An absent Options block IS caught: `Options.TunnelOptions` resolves
+        # to None and `value: empty` fires on it.
         {'VpnConnectionId': 'vpn-options-absent'},
-        # KNOWN LIMITATION: when TunnelOptions exists but carries no
-        # LogOptions, the flattening projection `TunnelOptions[]...` yields
-        # an EMPTY LIST, not None. `absent` therefore does not fire and
-        # `contains []` is False, so an unlogged tunnel escapes.
+        # A tunnel that exists but carries no LogOptions at all. The old
+        # projection `TunnelOptions[].LogOptions...LogEnabled` DROPPED it (a
+        # flattening projection yields an EMPTY LIST, not None, so neither
+        # `contains false` nor `absent` fired) and the connection read as
+        # compliant. Filtering the tunnels instead of projecting their values
+        # keeps it: a missing LogEnabled is not `true`.
         {'VpnConnectionId': 'vpn-logoptions-absent', 'Options': {'TunnelOptions': [
             {'OutsideIpAddress': '203.0.113.4'}]}},
+        # Same shape one level down: LogOptions present, CloudWatchLogOptions
+        # missing.
+        {'VpnConnectionId': 'vpn-cwlogoptions-absent', 'Options': {'TunnelOptions': [
+            {'OutsideIpAddress': '203.0.113.5', 'LogOptions': {}}]}},
+        # TunnelOptions present but empty: no tunnel data to judge, and a VPN
+        # connection always has two tunnels.
+        {'VpnConnectionId': 'vpn-tunnels-empty', 'Options': {'TunnelOptions': []}},
     ]
-    matched = sids(run_policy(POLICIES, 'vpn-tunnel-logging-disabled', resources),
-                   'VpnConnectionId')
-    assert matched == ['vpn-matches', 'vpn-options-absent']
+
+    def expected(matched):
+        assert sids(matched, 'VpnConnectionId') == [
+            'vpn-cwlogoptions-absent', 'vpn-logoptions-absent', 'vpn-matches',
+            'vpn-options-absent', 'vpn-tunnels-empty']
+
+    def back_to_the_projection(policy):
+        """Mutation: the shape the policy had before, which loses the tunnel
+        that carries no LogOptions block."""
+        policy['filters'][0]['or'][0] = {
+            'type': 'value',
+            'key': 'Options.TunnelOptions[].LogOptions.CloudWatchLogOptions.LogEnabled',
+            'op': 'contains',
+            'value': False,
+        }
+        return policy
+
+    expected(run_policy(POLICIES, 'vpn-tunnel-logging-disabled', resources))
+    verify_mutation(POLICIES, 'vpn-tunnel-logging-disabled', resources,
+                    mutate=back_to_the_projection, assertions=expected)
 
 
 # ------------------------------------------------ aws.client-vpn-endpoint ---
@@ -364,13 +438,21 @@ def test_eni_source_dest_check_disabled():
          'SourceDestCheck': True},
         {'NetworkInterfaceId': 'eni-nat-excluded', 'InterfaceType': 'nat_gateway',
          'SourceDestCheck': False},
-        # KNOWN LIMITATION: no `absent` branch, so an ENI whose
-        # SourceDestCheck never came back reads as compliant.
+        # SourceDestCheck absent: the `absent` branch reports it instead of
+        # reading `None == False` as "checking enabled".
         {'NetworkInterfaceId': 'eni-key-absent', 'InterfaceType': 'interface'},
+        # InterfaceType absent stays OUT of scope: the type filter is the
+        # policy's scope, and widening it on missing data is how the
+        # nat_gateway / load-balancer ENIs this control excludes come back in.
+        {'NetworkInterfaceId': 'eni-type-absent', 'SourceDestCheck': False},
     ]
-    matched = ids(run_policy(POLICIES, 'eni-source-dest-check-disabled', resources),
-                  'NetworkInterfaceId')
-    assert matched == ['eni-matches']
+
+    def expected(matched):
+        assert sids(matched, 'NetworkInterfaceId') == ['eni-key-absent', 'eni-matches']
+
+    expected(run_policy(POLICIES, 'eni-source-dest-check-disabled', resources))
+    verify_mutation(POLICIES, 'eni-source-dest-check-disabled', resources,
+                    mutate=drop_absent_branch(1), assertions=expected)
 
 
 def test_inventory_public_ip():

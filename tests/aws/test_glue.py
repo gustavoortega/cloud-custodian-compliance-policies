@@ -2,8 +2,6 @@
 
 Offline: no AWS credentials, no network.
 """
-import pytest
-
 from c7n_kit.testing import run_policy
 
 POLICIES = 'policies/aws/glue.yml'
@@ -61,21 +59,28 @@ def test_glue_job_unsupported_version():
     resources = [
         {'Name': 'matches', 'GlueVersion': '2.0'},
         {'Name': 'clean', 'GlueVersion': '4.0'},
+        # an absent GlueVersion IS the finding here (FSBP Glue.4 treats it as a
+        # fail) and is still reported, through the `absent` branch. What changed
+        # is that the version comparison no longer sees it: the `not-null` guard
+        # AND-ed in front of it keeps ComparableVersion(None) from raising and
+        # aborting the whole account/region run.
+        {'Name': 'key-absent'},
     ]
-    matched = [r['Name'] for r in run_policy(
-        POLICIES, 'glue-job-unsupported-version', resources)]
-    assert matched == ['matches']
+    # `or` merges branches through a set of ids: sort for a stable assertion.
+    matched = sorted(r['Name'] for r in run_policy(
+        POLICIES, 'glue-job-unsupported-version', resources))
+    assert matched == ['key-absent', 'matches']
 
 
-def test_glue_job_unsupported_version_absent_key_raises():
-    """KNOWN BUG: an absent GlueVersion crashes the policy, it does not miss it.
+def test_glue_job_unsupported_version_absent_key_is_reported_not_fatal():
+    """The job with no GlueVersion comes back as a finding, not an exception.
 
-    The `or` runs BOTH branches over the full resource list. The `absent`
-    branch would catch the job, but the `value_type: version` branch is also
-    evaluated on it and `ComparableVersion(None)` blows up with
-    AttributeError, taking the whole policy down for that region.
+    Remove the `not-null` guard from the `and` and this raises AttributeError
+    out of ComparableVersion(None): `or` runs EVERY branch over the FULL
+    resource list, so the job the `absent` branch catches also reaches the
+    `value_type: version` branch.
     """
     resources = [{'Name': 'key-absent'}]
-    with pytest.raises(AttributeError) as exc:
-        run_policy(POLICIES, 'glue-job-unsupported-version', resources)
-    assert 'ComparableVersion' in str(exc.value)
+    matched = [r['Name'] for r in run_policy(
+        POLICIES, 'glue-job-unsupported-version', resources)]
+    assert matched == ['key-absent']

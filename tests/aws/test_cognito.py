@@ -44,16 +44,28 @@ def test_cognito_user_pool_weak_password_policy():
          'Policies': {'PasswordPolicy': long_temp}},
         {'Id': 'clean', 'Name': 'd',
          'Policies': {'PasswordPolicy': dict(STRONG_PASSWORD_POLICY)}},
-        # KNOWN LIMITATION: with Policies absent every branch resolves to
-        # None -- `op: lt` does not match, `value: false` is None == False
-        # which is False, `op: gt` does not match -- so a user pool whose
-        # password policy never came back is reported as compliant.
-        {'Id': 'key-absent', 'Name': 'e'},
+        # covered by the block-level `absent` branch. Without it all six
+        # comparisons resolve against None -- `op: lt`/`op: gt` raise TypeError
+        # and c7n swallows it, `value: false` is None == False which is False
+        # -- so a pool with NO password policy at all read as compliant.
+        {'Id': 'matches-no-policy-block', 'Name': 'e'},
+        # `Policies` present but with no PasswordPolicy: same branch.
+        {'Id': 'matches-empty-policies', 'Name': 'f', 'Policies': {}},
+        # NOT reported, and deliberately: the block IS there, one optional
+        # field is missing. Cognito's documented default for the Require*
+        # flags is true, so a missing flag is not evidence of a weak policy.
+        # Only a missing BLOCK is evidence that nothing was read.
+        {'Id': 'clean-field-omitted', 'Name': 'g',
+         'Policies': {'PasswordPolicy': {
+             'MinimumLength': 12, 'RequireUppercase': True,
+             'RequireLowercase': True, 'RequireNumbers': True}}},
     ]
     # `or` resolves via set union, so sort before asserting.
     matched = sorted(r['Id'] for r in run_policy(
         POLICIES, 'cognito-user-pool-weak-password-policy', resources))
-    assert matched == ['matches-long-temp', 'matches-no-symbols', 'matches-short']
+    assert matched == ['matches-empty-policies', 'matches-long-temp',
+                       'matches-no-policy-block', 'matches-no-symbols',
+                       'matches-short']
 
 
 def test_cognito_user_pool_custom_auth_threat_protection_disabled():
@@ -106,11 +118,10 @@ def test_cognito_user_pool_deletion_protection_disabled():
     resources = [
         {'Id': 'matches', 'Name': 'a', 'DeletionProtection': 'INACTIVE'},
         {'Id': 'clean', 'Name': 'b', 'DeletionProtection': 'ACTIVE'},
-        # KNOWN LIMITATION: equality against the string "INACTIVE", so a pool
-        # whose DeletionProtection field never came back reads as compliant
-        # even though an unset field means protection is off.
+        # covered: only ACTIVE protects the pool, so absent belongs on the
+        # same side of the line as INACTIVE.
         {'Id': 'key-absent', 'Name': 'c'},
     ]
-    matched = [r['Id'] for r in run_policy(
-        POLICIES, 'cognito-user-pool-deletion-protection-disabled', resources)]
-    assert matched == ['matches']
+    matched = sorted(r['Id'] for r in run_policy(
+        POLICIES, 'cognito-user-pool-deletion-protection-disabled', resources))
+    assert matched == ['key-absent', 'matches']

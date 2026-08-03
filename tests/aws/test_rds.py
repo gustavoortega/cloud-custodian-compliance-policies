@@ -3,8 +3,15 @@
 Offline: no AWS credentials, no network.
 
 Every test asserts the REAL behaviour of the policy as written, including the
-cases where a resource that is missing the key escapes the filter. Those are
-marked with a `# KNOWN LIMITATION` comment. Nothing here fixes a policy.
+cases where a resource that is missing the key escapes the filter.
+
+Where a missing key leaves the resource in the unsafe-or-unverified state, the
+policy carries an `absent` branch and the key-less resource IS reported. Where
+the AWS API documents a default that puts an absent value on the SAFE side --
+`AutoMinorVersionUpgrade`, whose documented default is `true` -- or where the
+field is optional by design and its absence is the normal case rather than an
+anomaly -- `DBCluster.MultiAZ` -- the policy deliberately does NOT widen, and
+the test says so at the fixture that escapes. Those are decisions, not gaps.
 """
 from c7n_kit.testing import run_policy
 
@@ -39,13 +46,13 @@ def test_rds_backup_retention_insufficient():
         {'DBInstanceIdentifier': 'matches', 'BackupRetentionPeriod': 0},
         {'DBInstanceIdentifier': 'matches-short', 'BackupRetentionPeriod': 3},
         {'DBInstanceIdentifier': 'clean', 'BackupRetentionPeriod': 7},
-        # KNOWN LIMITATION: `op: lt` over an absent key compares None < 7,
-        # c7n swallows the TypeError and returns False, so the instance is
-        # reported as compliant.
+        # `op: lt` over an absent key compares None < 7 and c7n swallows the
+        # TypeError, so the `absent` branch cannot live inside the same filter:
+        # the policy wraps BOTH in an `or`, and that is what catches this one.
         {'DBInstanceIdentifier': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-backup-retention-insufficient', resources))
-    assert matched == ['matches', 'matches-short']
+    matched = sids(run_policy(POLICIES, 'rds-backup-retention-insufficient', resources))
+    assert matched == ['key-absent', 'matches', 'matches-short']
 
 
 def test_inventory_rds_public_endpoint():
@@ -64,12 +71,13 @@ def test_rds_storage_unencrypted():
     resources = [
         {'DBInstanceIdentifier': 'matches', 'StorageEncrypted': False},
         {'DBInstanceIdentifier': 'clean', 'StorageEncrypted': True},
-        # KNOWN LIMITATION: no `absent` branch. None == False is False, so an
-        # instance where StorageEncrypted never came back reads as encrypted.
+        # DescribeDBInstances types StorageEncrypted as an unboxed Boolean, so
+        # it is always serialised: an instance without it is an anomaly whose
+        # encryption nobody verified, and the `absent` branch reports it.
         {'DBInstanceIdentifier': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-storage-unencrypted', resources))
-    assert matched == ['matches']
+    matched = sids(run_policy(POLICIES, 'rds-storage-unencrypted', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_instance_deletion_protection_disabled():
@@ -94,19 +102,25 @@ def test_rds_instance_iam_auth_disabled():
          'DBInstanceStatus': 'available', 'IAMDatabaseAuthenticationEnabled': False},
         {'DBInstanceIdentifier': 'not-available', 'Engine': 'postgres',
          'DBInstanceStatus': 'stopped', 'IAMDatabaseAuthenticationEnabled': False},
-        # KNOWN LIMITATION: no `absent` branch on the boolean.
+        # IAM database authentication is off by default (CreateDBInstance:
+        # "By default, mapping isn't enabled"), so an absent flag points at the
+        # finding, never at the safe value. The `absent` branch reports it.
         {'DBInstanceIdentifier': 'key-absent', 'Engine': 'postgres',
          'DBInstanceStatus': 'available'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-instance-iam-auth-disabled', resources))
-    assert matched == ['matches']
+    matched = sids(run_policy(POLICIES, 'rds-instance-iam-auth-disabled', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_instance_auto_minor_version_upgrade_disabled():
     resources = [
         {'DBInstanceIdentifier': 'matches', 'AutoMinorVersionUpgrade': False},
         {'DBInstanceIdentifier': 'clean', 'AutoMinorVersionUpgrade': True},
-        # KNOWN LIMITATION: no `absent` branch, the key-less instance escapes.
+        # DELIBERATELY NOT WIDENED. CreateDBInstance documents the default:
+        # "By default, minor engine upgrades are applied automatically". An
+        # absent value therefore points at TRUE, the safe side, so an `absent`
+        # branch here would report instances that are in fact auto-patching.
+        # Absent is not the same as false for this flag.
         {'DBInstanceIdentifier': 'key-absent'},
     ]
     matched = ids(run_policy(
@@ -118,12 +132,14 @@ def test_rds_instance_copy_tags_to_snapshot_disabled():
     resources = [
         {'DBInstanceIdentifier': 'matches', 'CopyTagsToSnapshot': False},
         {'DBInstanceIdentifier': 'clean', 'CopyTagsToSnapshot': True},
-        # KNOWN LIMITATION: no `absent` branch, the key-less instance escapes.
+        # CreateDBInstance documents "By default, tags are not copied", so an
+        # absent flag points at the finding, not at the safe value. Same shape
+        # as rds-instance-deletion-protection-disabled below.
         {'DBInstanceIdentifier': 'key-absent'},
     ]
-    matched = ids(run_policy(
+    matched = sids(run_policy(
         POLICIES, 'rds-instance-copy-tags-to-snapshot-disabled', resources))
-    assert matched == ['matches']
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_instance_using_default_engine_port():
@@ -221,21 +237,27 @@ def test_rds_cluster_iam_auth_disabled():
     resources = [
         {'DBClusterIdentifier': 'matches', 'IAMDatabaseAuthenticationEnabled': False},
         {'DBClusterIdentifier': 'clean', 'IAMDatabaseAuthenticationEnabled': True},
-        # KNOWN LIMITATION: no `absent` branch, the key-less cluster escapes.
+        # CreateDBCluster documents "By default, mapping isn't enabled", so an
+        # absent flag points at the finding. DBCluster types this member as
+        # BooleanOptional, so its absence is possible by design -- but even
+        # then the cluster still has no IAM authentication, which is what the
+        # control counts.
         {'DBClusterIdentifier': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-cluster-iam-auth-disabled', resources),
-                  'DBClusterIdentifier')
-    assert matched == ['matches']
+    matched = sids(run_policy(POLICIES, 'rds-cluster-iam-auth-disabled', resources),
+                   'DBClusterIdentifier')
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_cluster_not_multi_az():
     resources = [
         {'DBClusterIdentifier': 'matches', 'MultiAZ': False},
         {'DBClusterIdentifier': 'clean', 'MultiAZ': True},
-        # KNOWN LIMITATION: DescribeDBClusters does not return MultiAZ for
-        # every engine/cluster shape, and there is no `absent` branch, so
-        # those clusters are silently reported as multi-AZ.
+        # DELIBERATELY NOT WIDENED. DescribeDBClusters types MultiAZ as
+        # BooleanOptional and does not return it for classic Aurora, so on an
+        # Aurora estate the absence is the COMMON CASE, not an anomaly -- and
+        # Aurora replicates its storage across three AZs regardless. An
+        # `absent` branch here would report most of the fleet as single-AZ.
         {'DBClusterIdentifier': 'key-absent'},
     ]
     matched = ids(run_policy(POLICIES, 'rds-cluster-not-multi-az', resources),
@@ -247,25 +269,28 @@ def test_rds_cluster_copy_tags_to_snapshot_disabled():
     resources = [
         {'DBClusterIdentifier': 'matches', 'CopyTagsToSnapshot': False},
         {'DBClusterIdentifier': 'clean', 'CopyTagsToSnapshot': True},
-        # KNOWN LIMITATION: no `absent` branch, the key-less cluster escapes.
+        # CreateDBCluster documents "The default is not to copy them", so an
+        # absent flag points at the finding, not at the safe value.
         {'DBClusterIdentifier': 'key-absent'},
     ]
-    matched = ids(run_policy(
+    matched = sids(run_policy(
         POLICIES, 'rds-cluster-copy-tags-to-snapshot-disabled', resources),
         'DBClusterIdentifier')
-    assert matched == ['matches']
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_cluster_storage_unencrypted():
     resources = [
         {'DBClusterIdentifier': 'matches', 'StorageEncrypted': False},
         {'DBClusterIdentifier': 'clean', 'StorageEncrypted': True},
-        # KNOWN LIMITATION: no `absent` branch, the key-less cluster escapes.
+        # DescribeDBClusters types StorageEncrypted as an unboxed Boolean --
+        # unlike MultiAZ next door -- so it is always serialised and a cluster
+        # without it is an anomaly whose encryption nobody verified.
         {'DBClusterIdentifier': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-cluster-storage-unencrypted', resources),
-                  'DBClusterIdentifier')
-    assert matched == ['matches']
+    matched = sids(run_policy(POLICIES, 'rds-cluster-storage-unencrypted', resources),
+                   'DBClusterIdentifier')
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_cluster_default_admin_username():
@@ -310,7 +335,10 @@ def test_rds_multi_az_cluster_auto_minor_version_upgrade_disabled():
          'AutoMinorVersionUpgrade': True},
         {'DBClusterIdentifier': 'aurora-excluded', 'Engine': 'aurora-mysql',
          'AutoMinorVersionUpgrade': False},
-        # KNOWN LIMITATION: no `absent` branch, the key-less cluster escapes.
+        # DELIBERATELY NOT WIDENED, for the same reason as the instance-level
+        # control: CreateDBCluster documents "By default, minor engine upgrades
+        # are applied automatically", so an absent value points at TRUE, the
+        # safe side.
         {'DBClusterIdentifier': 'key-absent', 'Engine': 'mysql'},
     ]
     matched = ids(run_policy(
@@ -343,30 +371,43 @@ def test_rds_snapshot_unencrypted_manual():
         {'DBSnapshotIdentifier': 'clean', 'SnapshotType': 'manual', 'Encrypted': True},
         {'DBSnapshotIdentifier': 'automated-excluded', 'SnapshotType': 'automated',
          'Encrypted': False},
-        # KNOWN LIMITATION: no `absent` branch on Encrypted, so a manual
-        # snapshot missing the flag reads as encrypted.
+        # DescribeDBSnapshots types Encrypted as an unboxed Boolean, so a
+        # manual snapshot without it is an anomaly whose encryption nobody
+        # verified, and the `absent` branch reports it.
         {'DBSnapshotIdentifier': 'key-absent', 'SnapshotType': 'manual'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-snapshot-unencrypted-manual', resources),
-                  'DBSnapshotIdentifier')
-    assert matched == ['matches']
+    matched = sids(run_policy(POLICIES, 'rds-snapshot-unencrypted-manual', resources),
+                   'DBSnapshotIdentifier')
+    assert matched == ['key-absent', 'matches']
 
 
 def test_rds_cluster_snapshot_unencrypted_manual():
+    """The field is StorageEncrypted, not Encrypted.
+
+    The two snapshot shapes disagree on the name. DescribeDBSnapshots returns
+    `Encrypted` on DBSnapshot; DescribeDBClusterSnapshots returns
+    `StorageEncrypted` on DBClusterSnapshot and has no `Encrypted` member at
+    all. The `legacy-key-only` fixture below is what the policy used to read:
+    a key AWS never sends, which is why the control reported the whole estate
+    as encrypted while checking nothing. It is reported now, correctly, as a
+    snapshot whose real encryption flag is missing.
+    """
     resources = [
         {'DBClusterSnapshotIdentifier': 'matches', 'SnapshotType': 'manual',
-         'Encrypted': False},
+         'StorageEncrypted': False},
         {'DBClusterSnapshotIdentifier': 'clean', 'SnapshotType': 'manual',
-         'Encrypted': True},
+         'StorageEncrypted': True},
         {'DBClusterSnapshotIdentifier': 'automated-excluded', 'SnapshotType': 'automated',
-         'Encrypted': False},
-        # KNOWN LIMITATION: no `absent` branch on Encrypted.
+         'StorageEncrypted': False},
+        # StorageEncrypted is an unboxed Boolean, so absence is an anomaly.
         {'DBClusterSnapshotIdentifier': 'key-absent', 'SnapshotType': 'manual'},
+        {'DBClusterSnapshotIdentifier': 'legacy-key-only', 'SnapshotType': 'manual',
+         'Encrypted': True},
     ]
-    matched = ids(run_policy(
+    matched = sids(run_policy(
         POLICIES, 'rds-cluster-snapshot-unencrypted-manual', resources),
         'DBClusterSnapshotIdentifier')
-    assert matched == ['matches']
+    assert matched == ['key-absent', 'legacy-key-only', 'matches']
 
 
 # --------------------------------------------------- aws.rds-subscription ---
@@ -381,8 +422,11 @@ def test_rds_event_subscription_cluster_incomplete():
          'Enabled': True, 'EventCategoriesList': ['maintenance', 'failure']},
         {'CustSubscriptionId': 'other-source-type', 'SourceType': 'db-instance',
          'Enabled': False, 'EventCategoriesList': []},
-        # KNOWN LIMITATION: `Enabled` absent does not match the `value: false`
-        # branch, so with a complete category list the subscription escapes.
+        # EventSubscription types Enabled as an unboxed Boolean and AWS
+        # documents no default for it, so a subscription that never reported
+        # the flag is one nobody can call live. The `Enabled: absent` branch
+        # reports it even when the category list is complete: a complete list
+        # on a subscription that may not be delivering is not a pass.
         {'CustSubscriptionId': 'enabled-absent', 'SourceType': 'db-cluster',
          'EventCategoriesList': ['maintenance', 'failure']},
         # An absent category list IS caught by the `not: contains` branch.
@@ -392,7 +436,8 @@ def test_rds_event_subscription_cluster_incomplete():
     matched = sids(run_policy(
         POLICIES, 'rds-event-subscription-cluster-incomplete', resources),
         'CustSubscriptionId')
-    assert matched == ['categories-absent', 'matches-disabled', 'matches-missing-category']
+    assert matched == ['categories-absent', 'enabled-absent',
+                       'matches-disabled', 'matches-missing-category']
 
 
 def test_rds_event_subscription_instance_incomplete():
@@ -406,7 +451,7 @@ def test_rds_event_subscription_instance_incomplete():
          'Enabled': True, 'EventCategoriesList': full},
         {'CustSubscriptionId': 'other-source-type', 'SourceType': 'db-cluster',
          'Enabled': False, 'EventCategoriesList': []},
-        # KNOWN LIMITATION: `Enabled` absent escapes when the categories are complete.
+        # `Enabled` absent is reported even with a complete category list.
         {'CustSubscriptionId': 'enabled-absent', 'SourceType': 'db-instance',
          'EventCategoriesList': full},
         # An absent category list IS caught.
@@ -416,7 +461,8 @@ def test_rds_event_subscription_instance_incomplete():
     matched = sids(run_policy(
         POLICIES, 'rds-event-subscription-instance-incomplete', resources),
         'CustSubscriptionId')
-    assert matched == ['categories-absent', 'matches-disabled', 'matches-missing-category']
+    assert matched == ['categories-absent', 'enabled-absent',
+                       'matches-disabled', 'matches-missing-category']
 
 
 def test_rds_event_subscription_parameter_group_incomplete():
@@ -430,7 +476,7 @@ def test_rds_event_subscription_parameter_group_incomplete():
          'Enabled': True, 'EventCategoriesList': ['configuration change']},
         {'CustSubscriptionId': 'other-source-type', 'SourceType': 'db-instance',
          'Enabled': False, 'EventCategoriesList': []},
-        # KNOWN LIMITATION: `Enabled` absent escapes when the category is present.
+        # `Enabled` absent is reported even with the category present.
         {'CustSubscriptionId': 'enabled-absent', 'SourceType': 'db-parameter-group',
          'EventCategoriesList': ['configuration change']},
         # An absent category list IS caught.
@@ -440,7 +486,8 @@ def test_rds_event_subscription_parameter_group_incomplete():
     matched = sids(run_policy(
         POLICIES, 'rds-event-subscription-parameter-group-incomplete', resources),
         'CustSubscriptionId')
-    assert matched == ['categories-absent', 'matches-disabled', 'matches-missing-category']
+    assert matched == ['categories-absent', 'enabled-absent',
+                       'matches-disabled', 'matches-missing-category']
 
 
 def test_rds_event_subscription_security_group_incomplete():
@@ -455,7 +502,7 @@ def test_rds_event_subscription_security_group_incomplete():
          'Enabled': True, 'EventCategoriesList': full},
         {'CustSubscriptionId': 'other-source-type', 'SourceType': 'db-instance',
          'Enabled': False, 'EventCategoriesList': []},
-        # KNOWN LIMITATION: `Enabled` absent escapes when the categories are complete.
+        # `Enabled` absent is reported even with a complete category list.
         {'CustSubscriptionId': 'enabled-absent', 'SourceType': 'db-security-group',
          'EventCategoriesList': full},
         # An absent category list IS caught.
@@ -465,7 +512,8 @@ def test_rds_event_subscription_security_group_incomplete():
     matched = sids(run_policy(
         POLICIES, 'rds-event-subscription-security-group-incomplete', resources),
         'CustSubscriptionId')
-    assert matched == ['categories-absent', 'matches-disabled', 'matches-missing-category']
+    assert matched == ['categories-absent', 'enabled-absent',
+                       'matches-disabled', 'matches-missing-category']
 
 
 # ---------------------------------------------------------- aws.rds-proxy ---
@@ -474,9 +522,11 @@ def test_rds_proxy_tls_not_required():
     resources = [
         {'DBProxyName': 'matches', 'RequireTLS': False},
         {'DBProxyName': 'clean', 'RequireTLS': True},
-        # KNOWN LIMITATION: no `absent` branch, the key-less proxy escapes.
+        # RequireTLS is opt-in ("By enabling this setting, you can enforce
+        # encrypted TLS connections"), so an absent flag points at the finding,
+        # and DescribeDBProxies types it as an unboxed Boolean besides.
         {'DBProxyName': 'key-absent'},
     ]
-    matched = ids(run_policy(POLICIES, 'rds-proxy-tls-not-required', resources),
-                  'DBProxyName')
-    assert matched == ['matches']
+    matched = sids(run_policy(POLICIES, 'rds-proxy-tls-not-required', resources),
+                   'DBProxyName')
+    assert matched == ['key-absent', 'matches']

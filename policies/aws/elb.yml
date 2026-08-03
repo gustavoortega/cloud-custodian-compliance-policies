@@ -368,10 +368,30 @@ policies:
 
     size` counts the entries of AvailabilityZones, so this matches a load
 
-    balancer attached to exactly one AZ and also one attached to none.
+    balancer attached to exactly one AZ.
+
+
+    The `not-null` guard in front of it is the fix for the OPPOSITE of the
+
+    usual absent-key bug: `value_type: size` resolves a missing key to length
+
+    0 (c7n catches the TypeError from len(None) and returns 0), and 0 is less
+
+    than 2, so without the guard every load balancer whose AvailabilityZones
+
+    never came back was reported as single-AZ on missing data alone. A load
+
+    balancer cannot exist in zero AZs; a size of 0 is a broken record, not a
+
+    single point of failure, and reporting it as one puts a row in front of
+
+    somebody who then finds two AZs in the console.
 
     '
   filters:
+  - type: value
+    key: AvailabilityZones
+    value: not-null
   - type: value
     key: AvailabilityZones
     value_type: size
@@ -451,8 +471,20 @@ policies:
 
     they front.
 
+
+    Same `not-null` guard as elb-classic-single-az, for the same reason: with
+
+    `value_type: size` a missing AvailabilityZones counts as 0, and 0 < 2
+
+    matches, so the rule reported load balancers on the absence of the list
+
+    rather than on its length. See that policy for the full note.
+
     '
   filters:
+  - type: value
+    key: AvailabilityZones
+    value: not-null
   - type: value
     key: AvailabilityZones
     value_type: size
@@ -480,10 +512,58 @@ policies:
 
     `defensive`, the value of finding out is in hours, not the next day.
 
+
+    `type: attributes`, NOT `type: value` over an `Attributes.` path. That is
+
+    the whole correction here, and it is a different bug from the rest of this
+
+    file: DescribeLoadBalancers does not return load balancer attributes at
+
+    all -- they come from DescribeLoadBalancerAttributes, a separate call --
+
+    so the key was missing on EVERY classic load balancer, `op: not-in`
+
+    against None is True (None is in no list), and the rule reported 100% of
+
+    the fleet, permanently, on missing data. A control that fires on
+
+    everything says nothing about anything. c7n''s own `attributes` filter
+
+    (c7n.resources.elb.CheckAttributes) makes the DescribeLoadBalancerAttributes
+
+    call and evaluates the value filter against the attribute block, which is
+
+    exactly what the v2 sibling already does; the key loses its `Attributes.`
+
+    prefix because the filter is handed that block directly.
+
+
+    The listener guard is the same lesson the ALB policy learned with NLBs:
+
+    desync mitigation governs how HTTP requests are parsed, so scope the rule
+
+    to load balancers that actually terminate HTTP/HTTPS. A TCP/SSL-only
+
+    classic LB has no HTTP layer to smuggle through, and it is the case where
+
+    the attribute is least likely to come back -- exactly the shape that
+
+    produced the fleet-wide false positive on the v2 side.
+
+
+    Cost: one extra API call per classic load balancer per run, and the policy
+
+    can no longer be exercised offline (the filter reaches for a client before
+
+    it reads anything). tests/aws/test_elb.py asserts that it does.
+
     '
   filters:
   - type: value
-    key: Attributes.AdditionalAttributes[?Key=='elb.http.desyncmitigationmode'].Value | [0]
+    key: ListenerDescriptions[?Listener.Protocol=='HTTP' || Listener.Protocol=='HTTPS']
+    value: not-null
+  - type: attributes
+    key: AdditionalAttributes[?Key=='elb.http.desyncmitigationmode'].Value | [0]
     op: not-in
     value:
     - defensive
@@ -590,12 +670,34 @@ policies:
 
     per-target-group ticket queue.
 
+
+    The `present` guard is what keeps this from reporting on missing data:
+
+    `op: not-equal` against an absent key is True (None equals nothing), so a
+
+    target group with no HealthCheckProtocol used to match on the strength of
+
+    the key not being there. And that absence is BY DESIGN, not an anomaly --
+
+    a Lambda target group with HealthCheckEnabled false has no health check
+
+    protocol to report, which is precisely the case this control excludes.
+
+    The guard goes on HealthCheckProtocol, the key that DECIDES, and not on
+
+    TargetType, the key that scopes: a target group with a plain HTTP health
+
+    check is a finding whether or not its type came back.
+
     '
   filters:
   - type: value
     key: TargetType
     value: lambda
     op: not-equal
+  - type: value
+    key: HealthCheckProtocol
+    value: present
   - type: value
     key: HealthCheckProtocol
     value: HTTPS
@@ -621,6 +723,19 @@ policies:
 
     per-target-group ticket queue.
 
+
+    "No wire protocol of their own" is literal: DescribeTargetGroups returns
+
+    no Protocol at all for a Lambda target group. Both `op: not-in` and `op:
+
+    not-equal` are True against a missing key, so without the `present` guard
+
+    the rule reported those target groups as unencrypted precisely because
+
+    there was nothing to encrypt. The guard sits on Protocol, the deciding
+
+    key; TargetType stays unguarded because it only scopes the rule.
+
     '
   filters:
   - type: value
@@ -629,6 +744,9 @@ policies:
     value:
     - lambda
     - alb
+  - type: value
+    key: Protocol
+    value: present
   - type: value
     key: Protocol
     value: GENEVE
@@ -649,12 +767,28 @@ policies:
 
     it.
 
+
+    Written as "Scheme is present AND is not internal" rather than the
+
+    shorter "is not internal": `op: not-equal` is True against an absent
+
+    key, so the short form inventoried a load balancer as internet-facing
+
+    when the field never came back. The rule is still expressed by
+
+    exclusion (any future scheme that is not `internal` still counts)
+
+    but it now needs the field to have arrived before it says anything.
+
     '
   resource: aws.app-elb
   metadata:
     frequency: daily
   filters:
   - and:
+    - type: value
+      key: Scheme
+      value: present
     - type: value
       key: Scheme
       value: internal
@@ -668,12 +802,30 @@ policies:
 
     resource type from app-elb, with its own Scheme field.
 
+
+    Same `present` guard as the ALB/NLB policy, and here the API documents
+
+    why it matters: Scheme is "valid only for load balancers in a VPC", so
+
+    the field genuinely did not exist on EC2-Classic load balancers. With
+
+    EC2-Classic retired the absence is no longer reachable, but a rule that
+
+    calls something internet-facing because a field is missing is stating a
+
+    conclusion it did not read, at 4h cadence and with a public-exposure
+
+    meaning attached to every row.
+
     '
   resource: aws.elb
   metadata:
     frequency: 4h
   filters:
   - and:
+    - type: value
+      key: Scheme
+      value: present
     - type: value
       key: Scheme
       value: internal

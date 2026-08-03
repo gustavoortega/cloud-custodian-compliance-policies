@@ -53,9 +53,25 @@ policies:
 
     omits the field.
 
+
+    The `containerDefinitions not-null` guard is about a different failure:
+
+    `length(null)` RAISES, so a task definition that came back without the
+
+    key would abort the whole account/region invocation instead of being
+
+    skipped. A task definition with no container definitions at all cannot
+
+    have a privileged container, but it is an odd resource in its own right
+
+    and this control no longer sees it.
+
     '
   filters:
   - type: latest-revision
+  - type: value
+    key: containerDefinitions
+    value: not-null
   - type: value
     key: length(containerDefinitions[?privileged==`true`])
     op: greater-than
@@ -92,9 +108,29 @@ policies:
 
     definitions), not from anything measured here.
 
+
+    The `containerDefinitions not-null` guard is the same one
+
+    `ecs-task-definition-privileged-container` carries: `length(null)`
+
+    RAISES, so a task definition that came back without the key would abort
+
+    the whole account/region invocation. `not-null` rather than `present`
+
+    because the finding is "at least one container can write to its root
+
+    filesystem", and a family with an empty container list has none, so
+
+    dropping it at the guard removes nothing this control would have
+
+    reported.
+
     '
   filters:
   - type: latest-revision
+  - type: value
+    key: containerDefinitions
+    value: not-null
   - type: value
     key: runtimePlatform.operatingSystemFamily
     op: ne
@@ -126,9 +162,27 @@ policies:
 
     file, or a value baked into the image) -- FSBP''s own scope is the same.
 
+
+    The `containerDefinitions not-null` guard is the same one
+
+    `ecs-task-definition-privileged-container` carries: `length(null)`
+
+    RAISES, so a task definition that came back without the key would abort
+
+    the whole account/region invocation. `not-null` rather than `present`
+
+    because a family with an empty container list has no environment
+
+    variables at all and so can never hold one of the three credential
+
+    names; the guard drops nothing this control would have reported.
+
     '
   filters:
   - type: latest-revision
+  - type: value
+    key: containerDefinitions
+    value: not-null
   - type: value
     key: length(containerDefinitions[].environment[] | [?contains(['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY',
       'ECS_ENGINE_AUTH_DATA'], name)])
@@ -159,9 +213,29 @@ policies:
 
     the result at container level when triaging.
 
+
+    The `containerDefinitions not-null` guard is the same one
+
+    `ecs-task-definition-privileged-container` carries: `length(null)`
+
+    RAISES, so a task definition that came back without the key would abort
+
+    the whole account/region invocation. `not-null` rather than `present`
+
+    because the finding is "at least one container has no log driver", and
+
+    a family with an empty container list has no container missing one --
+
+    the count would be 0 either way, so the guard changes nothing except
+
+    that the JMESPath never sees a null.
+
     '
   filters:
   - type: latest-revision
+  - type: value
+    key: containerDefinitions
+    value: not-null
   - type: value
     key: length(containerDefinitions[?logConfiguration.logDriver==null])
     op: greater-than
@@ -198,9 +272,27 @@ policies:
 
     control (ECS.21), not written here.
 
+
+    The `containerDefinitions not-null` guard is the same one
+
+    `ecs-task-definition-privileged-container` carries: `length(null)`
+
+    RAISES, so a task definition that came back without the key would abort
+
+    the whole account/region invocation. `not-null` rather than `present`
+
+    because the finding is "at least one container runs as root", and a
+
+    family with an empty container list runs nothing, so dropping it at the
+
+    guard removes nothing this control would have reported.
+
     '
   filters:
   - type: latest-revision
+  - type: value
+    key: containerDefinitions
+    value: not-null
   - type: value
     key: runtimePlatform.operatingSystemFamily
     op: ne

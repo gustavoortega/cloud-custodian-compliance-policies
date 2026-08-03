@@ -21,10 +21,14 @@ policies:
 
     '
   filters:
-  - type: value
-    key: BackupRetentionPeriod
-    op: lt
-    value: 7
+  - or:
+    - type: value
+      key: BackupRetentionPeriod
+      op: lt
+      value: 7
+    - type: value
+      key: BackupRetentionPeriod
+      value: absent
 - name: inventory-rds-public-endpoint
   resource: aws.rds
   metadata:
@@ -134,9 +138,13 @@ policies:
 
     '
   filters:
-  - type: value
-    key: StorageEncrypted
-    value: false
+  - or:
+    - type: value
+      key: StorageEncrypted
+      value: false
+    - type: value
+      key: StorageEncrypted
+      value: absent
 - name: rds-snapshot-shared-cross-account
   resource: aws.rds-snapshot
   metadata:
@@ -229,9 +237,13 @@ policies:
   - type: value
     key: SnapshotType
     value: manual
-  - type: value
-    key: Encrypted
-    value: false
+  - or:
+    - type: value
+      key: Encrypted
+      value: false
+    - type: value
+      key: Encrypted
+      value: absent
 - name: rds-cluster-snapshot-unencrypted-manual
   resource: aws.rds-cluster-snapshot
   metadata:
@@ -256,14 +268,35 @@ policies:
 
     (already covered by RDS.27 below) once per retention day.
 
+
+    The encryption flag is `StorageEncrypted`, NOT `Encrypted`. The two RDS
+
+    snapshot types do not agree on the name: `DescribeDBSnapshots` returns
+
+    `Encrypted` on DBSnapshot, `DescribeDBClusterSnapshots` returns
+
+    `StorageEncrypted` on DBClusterSnapshot and has no `Encrypted` member at
+
+    all. Keying this policy off `Encrypted` -- as it did -- is a filter on a
+
+    key that never arrives, which in c7n resolves to None, never equals False,
+
+    and reports every cluster snapshot in the estate as encrypted without
+
+    having looked at anything.
+
     '
   filters:
   - type: value
     key: SnapshotType
     value: manual
-  - type: value
-    key: Encrypted
-    value: false
+  - or:
+    - type: value
+      key: StorageEncrypted
+      value: false
+    - type: value
+      key: StorageEncrypted
+      value: absent
 - name: rds-instance-deletion-protection-disabled
   resource: aws.rds
   metadata:
@@ -332,9 +365,13 @@ policies:
     - backing-up
     - storage-optimization
     - storage-full
-  - type: value
-    key: IAMDatabaseAuthenticationEnabled
-    value: false
+  - or:
+    - type: value
+      key: IAMDatabaseAuthenticationEnabled
+      value: false
+    - type: value
+      key: IAMDatabaseAuthenticationEnabled
+      value: absent
 - name: rds-cluster-iam-auth-disabled
   resource: aws.rds-cluster
   metadata:
@@ -352,9 +389,13 @@ policies:
 
     '
   filters:
-  - type: value
-    key: IAMDatabaseAuthenticationEnabled
-    value: false
+  - or:
+    - type: value
+      key: IAMDatabaseAuthenticationEnabled
+      value: false
+    - type: value
+      key: IAMDatabaseAuthenticationEnabled
+      value: absent
 - name: rds-instance-auto-minor-version-upgrade-disabled
   resource: aws.rds
   metadata:
@@ -413,9 +454,13 @@ policies:
 
     '
   filters:
-  - type: value
-    key: CopyTagsToSnapshot
-    value: false
+  - or:
+    - type: value
+      key: CopyTagsToSnapshot
+      value: false
+    - type: value
+      key: CopyTagsToSnapshot
+      value: absent
 - name: rds-instance-copy-tags-to-snapshot-disabled
   resource: aws.rds
   metadata:
@@ -433,9 +478,13 @@ policies:
 
     '
   filters:
-  - type: value
-    key: CopyTagsToSnapshot
-    value: false
+  - or:
+    - type: value
+      key: CopyTagsToSnapshot
+      value: false
+    - type: value
+      key: CopyTagsToSnapshot
+      value: absent
 - name: rds-event-subscription-cluster-incomplete
   resource: aws.rds-subscription
   metadata:
@@ -471,6 +520,9 @@ policies:
     - type: value
       key: Enabled
       value: false
+    - type: value
+      key: Enabled
+      value: absent
     - not:
       - and:
         - type: value
@@ -510,6 +562,9 @@ policies:
     - type: value
       key: Enabled
       value: false
+    - type: value
+      key: Enabled
+      value: absent
     - not:
       - and:
         - type: value
@@ -551,6 +606,9 @@ policies:
     - type: value
       key: Enabled
       value: false
+    - type: value
+      key: Enabled
+      value: absent
     - not:
       - type: value
         key: EventCategoriesList
@@ -581,6 +639,9 @@ policies:
     - type: value
       key: Enabled
       value: false
+    - type: value
+      key: Enabled
+      value: absent
     - not:
       - and:
         - type: value
@@ -742,9 +803,13 @@ policies:
 
     '
   filters:
-  - type: value
-    key: StorageEncrypted
-    value: false
+  - or:
+    - type: value
+      key: StorageEncrypted
+      value: false
+    - type: value
+      key: StorageEncrypted
+      value: absent
 - name: rds-cluster-aurora-mysql-audit-log-disabled
   resource: aws.rds-cluster
   metadata:
@@ -982,9 +1047,13 @@ policies:
 
     '
   filters:
-  - type: value
-    key: RequireTLS
-    value: false
+  - or:
+    - type: value
+      key: RequireTLS
+      value: false
+    - type: value
+      key: RequireTLS
+      value: absent
 - name: rds-cluster-aurora-mysql-audit-logging-param-disabled
   resource: aws.rds-cluster
   metadata:

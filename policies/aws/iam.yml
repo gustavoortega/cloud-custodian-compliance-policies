@@ -16,13 +16,36 @@ policies:
 
     [prowler iam_no_expired_server_certificates_stored]
 
+
+    The `absent` branch is a SECOND filter and not an extra key on the first
+
+    one: with `value_type: expiration` the conversion runs BEFORE the absent
+
+    check, so a certificate with no Expiration ends up comparing None against
+
+    a datetime, c7n''s ValueFilter.match swallows the TypeError as "no match",
+
+    and the certificate reads as valid. Every X.509 certificate has a notAfter
+
+    and IAM returns it, so a record without one is a certificate whose validity
+
+    was never established -- which is not the same as a certificate that is
+
+    still good. This is a handful of resources per account at most: reporting
+
+    the unreadable one costs nothing and hiding it costs a live TLS endpoint.
+
     '
   filters:
-  - type: value
-    key: Expiration
-    op: lt
-    value_type: expiration
-    value: 0
+  - or:
+    - type: value
+      key: Expiration
+      op: lt
+      value_type: expiration
+      value: 0
+    - type: value
+      key: Expiration
+      value: absent
 - name: iam-access-key-older-than-1y
   resource: aws.iam-user
   metadata:
@@ -269,6 +292,31 @@ policies:
 
     genuinely external trusts.
 
+
+    A role with NO AssumeRolePolicyDocument is not reported, and that is a
+
+    decision rather than an oversight: "the document did not come back" is not
+
+    "the document grants nothing", but it is not a cross-account grant either,
+
+    and inventing one would put a role in this inventory on the strength of a
+
+    key that never arrived. Same reasoning as inventory-s3-insecure-transport,
+
+    which drops the buckets whose GetBucketPolicy was denied instead of
+
+    counting them as policy-less. The gap is also not reachable in a describe
+
+    run: c7n''s aws.iam-role carries `detail_spec = get_role`, GetRole always
+
+    returns the trust document, and a role deleted mid-run is dropped whole by
+
+    _scalar_augment rather than emitted without it. If that ever changes, the
+
+    honest fix is a separate "roles we could not read" policy, not widening
+
+    this one.
+
     '
   filters:
   - type: cross-account
@@ -283,6 +331,19 @@ policies:
     Wiz "IAM role with cross-account trust to an unknown account", Prowler
 
     iam_role_cross_account_readonlyaccess_policy.
+
+
+    Deliberately NOT extended to the role with no AssumeRolePolicyDocument:
+
+    see the note in inventory-iam-role-cross-account. Reporting a role as
+
+    assumable from outside the organisation requires having read a statement
+
+    that says so -- an absent document is a gap in coverage, not a grant, and
+
+    this rule is critical/4h, so a row here has to be a grant somebody can go
+
+    and look at.
 
     '
   metadata:
@@ -384,6 +445,15 @@ policies:
     finding the day the provider got approved, when it had been there all
 
     along. What a rule means cannot depend on a list.
+
+
+    A role with no AssumeRolePolicyDocument is not reported, for the reason
+
+    spelled out in inventory-iam-role-cross-account: this rule reports a
+
+    STATEMENT that trusts an external account without an ExternalId condition,
+
+    and there is no statement to point at when the document never arrived.
 
     '
   metadata:

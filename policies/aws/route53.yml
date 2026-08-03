@@ -56,6 +56,19 @@ policies:
 
     resolves it. The fix is one click and has no operational downside.
 
+
+    A domain whose `TransferLock` never came back is reported as well. In Python
+
+    `None == False` is False, so without the `absent` branch a domain that AWS
+
+    never described would be indistinguishable from one that is locked, and this
+
+    control would assert a `critical` guarantee it never verified. Absent means
+
+    "we do not know whether it is locked", which is not the same answer as "it is
+
+    locked".
+
     '
   conditions:
   - type: value
@@ -63,9 +76,13 @@ policies:
     op: eq
     value: us-east-1
   filters:
-  - type: value
-    key: TransferLock
-    value: false
+  - or:
+    - type: value
+      key: TransferLock
+      value: false
+    - type: value
+      key: TransferLock
+      value: absent
 - name: r53domain-autorenew-disabled
   resource: aws.r53domain
   metadata:
@@ -77,6 +94,13 @@ policies:
 
     off the air and becomes available for a third party to register.
 
+
+    Same absence rule as the transfer-lock control above: a domain whose
+
+    `AutoRenew` never came back is reported, because "the field did not arrive" is
+
+    not evidence that renewal is on.
+
     '
   conditions:
   - type: value
@@ -84,9 +108,13 @@ policies:
     op: eq
     value: us-east-1
   filters:
-  - type: value
-    key: AutoRenew
-    value: false
+  - or:
+    - type: value
+      key: AutoRenew
+      value: false
+    - type: value
+      key: AutoRenew
+      value: absent
 - name: r53domain-expiring-90d
   resource: aws.r53domain
   metadata:
@@ -100,6 +128,21 @@ policies:
 
     is lost.
 
+
+    The `absent` branch is a SEPARATE filter inside the `or`, not an extra key on
+
+    the comparison, and that is not cosmetic: with `value_type: expiration` an
+
+    absent `Expiry` parses to `None`, comparing it to a date raises TypeError, and
+
+    `ValueFilter.match` swallows that as "no match". A branch added to the same
+
+    filter would never be reached. ListDomains returns `Expiry` for every
+
+    registered domain, so its absence is an anomaly worth one row, not a normal
+
+    shape of the response.
+
     '
   conditions:
   - type: value
@@ -107,11 +150,15 @@ policies:
     op: eq
     value: us-east-1
   filters:
-  - type: value
-    key: Expiry
-    value_type: expiration
-    op: lt
-    value: 90
+  - or:
+    - type: value
+      key: Expiry
+      value_type: expiration
+      op: lt
+      value: 90
+    - type: value
+      key: Expiry
+      value: absent
 - name: inventory-hosted-zones
   resource: aws.hostedzone
   description: 'Inventory of every public Route 53 hosted zone in the account
@@ -120,11 +167,26 @@ policies:
 
     resolve inside a VPC, are excluded.
 
+
+    A zone whose `Config` block never came back is listed too. `PrivateZone` is
+
+    optional in the ListHostedZones response and defaults to false, so an absent
+
+    value means public -- in scope for this inventory. Leaving it out would shrink
+
+    the denominator every other public-zone control is measured against, which is
+
+    the quietest way to look compliant.
+
     '
   filters:
-  - type: value
-    key: Config.PrivateZone
-    value: false
+  - or:
+    - type: value
+      key: Config.PrivateZone
+      value: false
+    - type: value
+      key: Config.PrivateZone
+      value: absent
 - name: inventory-hosted-zones-records
   resource: aws.rrset
   description: 'Inventory of every A, CNAME, and MX record across the account''s

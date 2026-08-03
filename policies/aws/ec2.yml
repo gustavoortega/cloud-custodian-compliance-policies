@@ -220,6 +220,23 @@ policies:
 
     [prowler ec2_instance_imdsv2_enabled + ec2_instance_public_ip]
 
+
+    The last condition also matches the key being absent, and only that one:
+
+    the first three are SCOPE (running, public IP, instance profile) and a
+
+    missing key there means the instance is not in scope, while
+
+    MetadataOptions is the one that DECIDES. `optional` is the AWS default,
+
+    so an instance whose MetadataOptions never came back is at best
+
+    unverified and at worst exactly the default this rule looks for -- and
+
+    `None == ''optional''` is False, so without the branch it would read as
+
+    if IMDSv2 were enforced.
+
     '
   filters:
   - type: value
@@ -231,9 +248,13 @@ policies:
   - type: value
     key: IamInstanceProfile
     value: present
-  - type: value
-    key: MetadataOptions.HttpTokens
-    value: optional
+  - or:
+    - type: value
+      key: MetadataOptions.HttpTokens
+      value: optional
+    - type: value
+      key: MetadataOptions.HttpTokens
+      value: absent
 - name: launch-template-imdsv1-allowed
   resource: aws.launch-template-version
   metadata:
@@ -758,14 +779,35 @@ policies:
 
     [FSBP EC2.15]
 
+
+    The exclusion is written as an `or` with `absent` because a plain
+
+    `DefaultForAz: false` DISARMS the policy: `None == False` is False, so a
+
+    subnet that auto-assigns public IPs and whose DefaultForAz never came back
+
+    would be dropped by the exclusion before anything was decided about it.
+
+    describe_subnets returns DefaultForAz for every subnet, so this branch is a
+
+    safety net that costs nothing in volume -- but the failure mode it covers
+
+    is silent, and it is the guard clause that swallows the finding, not the
+
+    condition that produces it.
+
     '
   filters:
   - type: value
     key: MapPublicIpOnLaunch
     value: true
-  - type: value
-    key: DefaultForAz
-    value: false
+  - or:
+    - type: value
+      key: DefaultForAz
+      value: false
+    - type: value
+      key: DefaultForAz
+      value: absent
 - name: nacl-unused-non-default
   resource: aws.network-acl
   metadata:
@@ -791,14 +833,35 @@ policies:
 
     [FSBP EC2.16]
 
+
+    Two different treatments of a missing key here, on purpose:
+
+
+    - `Associations` is the EVIDENCE. Only the explicit empty list counts. An
+
+    absent key is not proof that the NACL is unassociated, and reporting an
+
+    orphan on a key that never arrived would be inventing the finding.
+
+
+    - `IsDefault` is the EXCLUSION, and an exclusion that fires on a missing
+
+    key silently drops real orphans (`None == False` is False, so the whole
+
+    policy is disarmed for that NACL). It gets the `absent` branch.
+
     '
   filters:
   - type: value
     key: Associations
     value: []
-  - type: value
-    key: IsDefault
-    value: false
+  - or:
+    - type: value
+      key: IsDefault
+      value: false
+    - type: value
+      key: IsDefault
+      value: absent
 - name: transit-gateway-auto-accepts-shared-attachments
   resource: aws.transit-gateway
   metadata:
@@ -857,16 +920,43 @@ policies:
 
     [FSBP EC2.171]
 
+
+    The first branch selects the TUNNELS that are not logging rather than
+
+    projecting their LogEnabled values, and that is the whole point. The
+
+    previous shape (`TunnelOptions[].LogOptions.CloudWatchLogOptions.LogEnabled`
+
+    with `op: contains, value: false`) only saw tunnels that carry a LogOptions
+
+    block: a tunnel with no LogOptions at all -- which is the shape of a tunnel
+
+    that was never configured for logging, the exact thing this rule looks for
+
+    -- is DROPPED by the flattening projection, which yields `[]` and not
+
+    `None`, so neither `contains false` nor the `absent` branch fired and the
+
+    connection read as compliant. Comparing inside the filter expression
+
+    (`!= `true``) keeps those tunnels in: a missing LogEnabled is not `true`.
+
+
+    The second branch is the "no data at all" case: `value: empty` fires both
+
+    when Options never came back and when TunnelOptions is an empty list. A VPN
+
+    connection always has two tunnels, so neither is a normal reading.
+
     '
   filters:
   - or:
     - type: value
-      key: Options.TunnelOptions[].LogOptions.CloudWatchLogOptions.LogEnabled
-      op: contains
-      value: false
+      key: Options.TunnelOptions[?LogOptions.CloudWatchLogOptions.LogEnabled != `true`]
+      value: not-null
     - type: value
-      key: Options.TunnelOptions[].LogOptions.CloudWatchLogOptions.LogEnabled
-      value: absent
+      key: Options.TunnelOptions
+      value: empty
 - name: client-vpn-connection-logging-disabled
   resource: aws.client-vpn-endpoint
   metadata:
@@ -1092,6 +1182,23 @@ policies:
 
     [FSBP EC2.180]
 
+
+    The `absent` branch is on the deciding key only. The InterfaceType filter
+
+    stays a plain `op: in`, so an ENI whose type never came back is out of
+
+    scope rather than assumed in it -- widening the scope on missing data is
+
+    how the NAT-gateway and load-balancer ENIs this control deliberately
+
+    excludes would come back in. SourceDestCheck is different: it is the
+
+    condition itself, describe_network_interfaces returns it for every ENI,
+
+    and `None == False` is False, so a record without it would otherwise be
+
+    counted as "check enabled" without anything having been read.
+
     '
   filters:
   - type: value
@@ -1104,9 +1211,13 @@ policies:
     - efa
     - quicksight
     - aws_codestar_connections_managed
-  - type: value
-    key: SourceDestCheck
-    value: false
+  - or:
+    - type: value
+      key: SourceDestCheck
+      value: false
+    - type: value
+      key: SourceDestCheck
+      value: absent
 - name: launch-configuration-imdsv2-not-required
   resource: aws.launch-config
   metadata:
@@ -1463,11 +1574,26 @@ policies:
 
     comes back in the response. Zero marginal cost.
 
+
+    The `absent` branch covers the record where it did NOT come back. `optional`
+
+    is the AWS default for an instance launched without asking for IMDSv2, so a
+
+    missing MetadataOptions block is either that default or a describe we could
+
+    not read -- neither of them is "IMDSv2 enforced", which is what a bare
+
+    `value: optional` would have concluded (`None == ''optional''` is False).
+
     '
   filters:
-  - type: value
-    key: MetadataOptions.HttpTokens
-    value: optional
+  - or:
+    - type: value
+      key: MetadataOptions.HttpTokens
+      value: optional
+    - type: value
+      key: MetadataOptions.HttpTokens
+      value: absent
   - type: value
     key: State.Name
     value: running

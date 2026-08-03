@@ -65,15 +65,22 @@ def test_secretsmanager_unused_and_stale():
         {'Name': 'clean-recent-access', 'CreatedDate': _days_ago(400),
          'LastAccessedDate': _days_ago(3)},
         {'Name': 'clean-young', 'CreatedDate': _days_ago(10)},
-        # KNOWN LIMITATION: with `value_type: age` an absent CreatedDate parses
-        # to 0, the comparison against a datetime raises TypeError and c7n
-        # swallows it as "no match", so the secret reads as compliant.
+        # covered by the second branch of the age `or`. With `value_type: age`
+        # an absent CreatedDate makes the comparison raise TypeError, which
+        # c7n swallows as "no match" -- and because that filter is the GUARD,
+        # one missing field used to drop the secret out of the control
+        # entirely, not just out of one branch.
         {'Name': 'key-absent'},
+        # a young secret with a recent read is still clean: the guard was
+        # widened for absence only, not loosened.
+        {'Name': 'clean-young-recent', 'CreatedDate': _days_ago(10),
+         'LastAccessedDate': _days_ago(1)},
     ]
     matched = [r['Name'] for r in run_policy(
         POLICIES, 'secretsmanager-unused-and-stale', resources)]
     # `or` merges branches through a set of ids: sort for a stable assertion.
-    assert sorted(matched) == ['matches-never-accessed', 'matches-stale-access']
+    assert sorted(matched) == ['key-absent', 'matches-never-accessed',
+                               'matches-stale-access']
 
 
 def test_secretsmanager_not_rotated_recently():

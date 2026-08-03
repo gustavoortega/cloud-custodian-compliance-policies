@@ -63,8 +63,24 @@ policies:
 
     separate policy here -- flagged as a known gap in this family''s coverage.
 
+
+    The `methodSettings present` guard is what keeps `values(null)` from
+
+    RAISING on a stage the key never came back for: a jmespath type error
+
+    there aborts the whole account/region invocation, not just this stage.
+
+    `present` and not `not-null` on purpose -- an EMPTY methodSettings map is
+
+    a real finding (no method setting carries a logging level) and has to
+
+    stay reported.
+
     '
   filters:
+  - type: value
+    key: methodSettings
+    value: present
   - type: value
     key: values(methodSettings) | [?loggingLevel=='ERROR' || loggingLevel=='INFO']
     value: empty
@@ -208,8 +224,20 @@ policies:
 
     rather than only the wildcard one.
 
+
+    Same `methodSettings present` guard as APIGateway.1 above: without it a
+
+    stage with no methodSettings at all makes `values(null)` raise and takes
+
+    the whole invocation down. A stage with no method settings has no cache
+
+    to leave unencrypted, so guarding it out costs no coverage here.
+
     '
   filters:
+  - type: value
+    key: methodSettings
+    value: present
   - type: value
     key: values(methodSettings)[?cachingEnabled && !cacheDataEncrypted]
     value: not-null

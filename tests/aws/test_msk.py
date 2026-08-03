@@ -11,20 +11,32 @@ ARN = 'arn:aws:kafka:us-east-1:000000000000:cluster/%s/1234-5678-9'
 def test_msk_cluster_client_broker_plaintext():
     resources = [
         {'ClusterArn': ARN % 'matches', 'ClusterName': 'matches', 'State': 'ACTIVE',
+         'ClusterType': 'PROVISIONED',
          'EncryptionInfo': {'EncryptionInTransit': {
              'ClientBroker': 'TLS_PLAINTEXT', 'InCluster': True}}},
         {'ClusterArn': ARN % 'clean', 'ClusterName': 'clean', 'State': 'ACTIVE',
+         'ClusterType': 'PROVISIONED',
          'EncryptionInfo': {'EncryptionInTransit': {
              'ClientBroker': 'TLS', 'InCluster': True}}},
-        # KNOWN LIMITATION: `op: in` turns an absent key into () before
-        # comparing, and () is not in the list, so a cluster with no
-        # EncryptionInfo block at all is reported as compliant.
+        # covered by the second branch: `op: in` turns an absent key into ()
+        # before comparing and () is not in the list, so this provisioned
+        # cluster used to score as encrypted without anything being read.
         {'ClusterArn': ARN % 'key-absent', 'ClusterName': 'key-absent',
-         'State': 'ACTIVE'},
+         'State': 'ACTIVE', 'ClusterType': 'PROVISIONED'},
+        # NOT reported, and this is why the branch is scoped: c7n enumerates
+        # with list_clusters_v2 and flattens the `Provisioned` sub-document to
+        # the top level, so a SERVERLESS cluster has no EncryptionInfo key at
+        # all. Serverless MSK has no plaintext option -- TLS is mandatory and
+        # not configurable -- so an unscoped absent branch would report the
+        # whole serverless fleet.
+        {'ClusterArn': ARN % 'clean-serverless', 'ClusterName': 'clean-serverless',
+         'State': 'ACTIVE', 'ClusterType': 'SERVERLESS',
+         'Serverless': {'VpcConfigs': [{'SubnetIds': ['subnet-1']}]}},
     ]
-    matched = [r['ClusterName'] for r in run_policy(
-        POLICIES, 'msk-cluster-client-broker-plaintext', resources)]
-    assert matched == ['matches']
+    # `or` resolves via set union; sort before asserting.
+    matched = sorted(r['ClusterName'] for r in run_policy(
+        POLICIES, 'msk-cluster-client-broker-plaintext', resources))
+    assert matched == ['key-absent', 'matches']
 
 
 def test_msk_cluster_unauthenticated_access_enabled():
