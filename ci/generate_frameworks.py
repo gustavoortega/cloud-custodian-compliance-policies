@@ -254,7 +254,14 @@ def badges():
                    for f in glob.glob(f"{POLICIES}/*.yml"))
     tests = _count_tests()
 
+    repo = "gustavoortega/cloud-custodian-compliance-policies"
     row = " ".join([
+        # The CI badge is the only one that is not a number this script
+        # computed: it is GitHub reporting whether the workflow passed. It
+        # goes first because a green coverage badge on a repo whose tests do
+        # not run is exactly the kind of claim this repo argues against.
+        f"[![ci](https://github.com/{repo}/actions/workflows/ci.yml/"
+        f"badge.svg)](https://github.com/{repo}/actions/workflows/ci.yml)",
         f"![FSBP](https://img.shields.io/badge/FSBP-{covered}%2F{len(controls)}"
         f"_controls-2ea44f?style=flat-square)",
         f"![policies](https://img.shields.io/badge/policies-{policies}-"
