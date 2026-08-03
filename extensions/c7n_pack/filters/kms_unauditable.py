@@ -1,5 +1,9 @@
 """`cross-account-tolerant` and `unauditable` filters, both on aws.kms-key.
 
+Reported upstream as cloud-custodian/cloud-custodian#10962. If that lands,
+this file's reason to exist mostly goes with it, which is the outcome to
+want. Until then it is here.
+
 WHY THIS NEEDS CODE
 -------------------
 c7n's own `cross-account` filter on aws.kms-key (`KMSCrossAccountAccessFilter`
