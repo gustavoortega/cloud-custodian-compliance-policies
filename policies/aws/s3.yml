@@ -103,6 +103,7 @@ policies:
       everyone_only: true
       whitelist_orgids:
       - o-exampleorg1
+      # REPLACE: your own account IDs. Anything off this list is treated as external.
       whitelist:
       - '111111111111'
       - '222222222222'
@@ -277,6 +278,7 @@ policies:
       everyone_only: true
       whitelist_orgids:
       - o-exampleorg1
+      # REPLACE: your own account IDs. Anything off this list is treated as external.
       whitelist:
       - '111111111111'
       - '222222222222'
@@ -362,6 +364,7 @@ policies:
       - s3:GetBucketLocation
       whitelist_orgids:
       - o-exampleorg1
+      # REPLACE: your own account IDs. Anything off this list is treated as external.
       whitelist: &id001
       - '111111111111'
       - '222222222222'

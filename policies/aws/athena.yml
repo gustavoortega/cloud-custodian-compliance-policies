@@ -18,6 +18,7 @@ policies:
   - type: value
     key: account_id
     op: in
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     value:
     - '111111111111'
     - '222222222222'
@@ -65,6 +66,7 @@ policies:
   - type: value
     key: account_id
     op: in
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     value:
     - '111111111111'
     - '222222222222'

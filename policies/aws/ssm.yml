@@ -29,6 +29,7 @@ policies:
   - type: cross-account
     whitelist_orgids:
     - o-exampleorg1
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     whitelist:
     - '111111111111'
     - '222222222222'

@@ -139,6 +139,9 @@ policies:
     balancer that serves nothing.
 
     '
+  # DELIBERATE: no `absent` branch here. A load balancer with no listener at
+  # all is not serving anything in the clear, so absence is the safe state and
+  # reporting it would invent a finding.
   filters:
   - type: value
     key: ListenerDescriptions

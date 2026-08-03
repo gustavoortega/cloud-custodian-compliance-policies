@@ -358,10 +358,12 @@ policies:
   - type: external-trust
     whitelist_orgids:
     - o-exampleorg1
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     whitelist: &id001
     - '111111111111'
     - '222222222222'
     - '333333333333'
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     third_parties:
     - '444444444444'
     - '555555555555'
@@ -400,6 +402,10 @@ policies:
     - PCI 7.2.1
     - 'SOX ITGC: Access'
     frequency: 4h
+  # DELIBERATE: no `absent` branch here. When the trust document does not come
+  # back, c7n drops the role instead of emitting it blank, so there is no
+  # resource left to widen this filter onto. "The document did not come back"
+  # is not "there are no grants", but it has to be caught upstream, not here.
   filters:
   - type: external-trust
     whitelist_orgids:
@@ -464,6 +470,10 @@ policies:
     - PCI 7.2.1
     - 'SOX ITGC: Access'
     frequency: 4h
+  # DELIBERATE: no `absent` branch here. When the trust document does not come
+  # back, c7n drops the role instead of emitting it blank, so there is no
+  # resource left to widen this filter onto. "The document did not come back"
+  # is not "there are no grants", but it has to be caught upstream, not here.
   filters:
   - type: external-trust
     require_external_id: true
@@ -542,6 +552,10 @@ policies:
     - PCI 7.2.1
     - 'SOX ITGC: Access'
     frequency: daily
+  # DELIBERATE: no `absent` branch here. When the trust document does not come
+  # back, c7n drops the role instead of emitting it blank, so there is no
+  # resource left to widen this filter onto. "The document did not come back"
+  # is not "there are no grants", but it has to be caught upstream, not here.
   filters:
   - type: external-trust
     whitelist_orgids:

@@ -38,10 +38,14 @@ policies:
     not a finding this policy can express.
 
     '
+  # DELIBERATE: no `absent` branch here. When the queue policy does not come
+  # back, c7n drops the queue instead of emitting it blank, so there is no
+  # resource left to widen this filter onto.
   filters:
   - type: cross-account
     whitelist_orgids:
     - o-exampleorg1
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     whitelist:
     - '111111111111'
     - '222222222222'

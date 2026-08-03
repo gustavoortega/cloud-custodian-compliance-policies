@@ -167,6 +167,7 @@ policies:
   - type: cross-account
     whitelist_orgids:
     - o-exampleorg1
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     whitelist:
     - '111111111111'
     - '222222222222'
@@ -411,6 +412,9 @@ policies:
     fleet-level metric rather than as a per-instance ticket queue.
 
     '
+  # DELIBERATE: no `absent` branch here. AutoMinorVersionUpgrade is Boolean in the
+  # botocore model, not BooleanOptional, so AWS always serialises it. There is no
+  # absent case to cover, and inventing one would only add a branch nobody hits.
   filters:
   - type: value
     key: AutoMinorVersionUpgrade
@@ -433,6 +437,9 @@ policies:
     as a per-cluster ticket queue.
 
     '
+  # DELIBERATE: no `absent` branch here. DBCluster.MultiAZ is BooleanOptional in
+  # the botocore model, which is AWS saying it may omit the field by design, and
+  # it does for classic Aurora. Reporting absent would flag every one of them.
   filters:
   - type: value
     key: MultiAZ
@@ -864,6 +871,9 @@ policies:
     does not cover.
 
     '
+  # DELIBERATE: no `absent` branch here. AutoMinorVersionUpgrade is Boolean in the
+  # botocore model, not BooleanOptional, so AWS always serialises it. There is no
+  # absent case to cover, and inventing one would only add a branch nobody hits.
   filters:
   - type: value
     key: Engine

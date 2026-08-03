@@ -134,6 +134,7 @@ policies:
     '
   filters:
   - type: cross-account
+    # REPLACE: your own account IDs. Anything off this list is treated as external.
     whitelist:
     - '111111111111'
     - '222222222222'
