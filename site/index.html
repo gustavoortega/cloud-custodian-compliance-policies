@@ -21,6 +21,7 @@
     <nav role="tablist" aria-label="Sections">
       <button role="tab" id="tab-run" aria-controls="screen-run" aria-selected="true">Run a policy</button>
       <button role="tab" id="tab-controls" aria-controls="screen-controls" aria-selected="false">Controls</button>
+      <button role="tab" id="tab-builder" aria-controls="screen-builder" aria-selected="false">Builder</button>
     </nav>
   </header>
 
@@ -55,8 +56,19 @@
         </div>
         <div class="col">
           <h3><span><i>2</i> The resource it runs on</span></h3>
-          <div class="example-tabs" id="example-tabs"></div>
-          <pre id="resource-json"></pre>
+          <div class="source-tabs">
+            <button type="button" id="src-examples" aria-pressed="true">Examples</button>
+            <button type="button" id="src-paste" aria-pressed="false">Paste your own</button>
+          </div>
+          <div id="examples-pane">
+            <div class="example-tabs" id="example-tabs"></div>
+            <pre id="resource-json"></pre>
+          </div>
+          <div id="paste-pane" hidden>
+            <textarea id="paste-input" spellcheck="false" aria-label="Paste a resource as JSON"></textarea>
+            <p class="paste-note">Read in your browser. Nothing is uploaded, and this is the only answer on the site that c7n did not compute.</p>
+            <p class="paste-error" id="paste-error" hidden></p>
+          </div>
         </div>
         <div class="col">
           <h3><span><i>3</i> The answer</span></h3>
@@ -106,12 +118,88 @@
     <div class="rows" id="ctl-rows"></div>
   </section>
 
+
+  <section class="screen" id="screen-builder" role="tabpanel" aria-labelledby="tab-builder" hidden>
+    <div class="section-head">
+      <h3>Write one without hand-writing YAML</h3>
+      <p>Only the keys the catalogue already uses for that resource type. The preview updates as you type.</p>
+    </div>
+
+    <div class="builder">
+      <div class="pane">
+        <h3><span>Policy</span></h3>
+        <div class="field">
+          <label for="b-name">Name</label>
+          <input type="text" id="b-name" value="rds-instance-public" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="b-resource">Resource type</label>
+          <select id="b-resource"></select>
+          <span class="hint" id="b-resource-hint"></span>
+        </div>
+        <div class="field">
+          <label for="b-key">Key</label>
+          <select id="b-key"></select>
+          <span class="hint" id="b-key-hint"></span>
+        </div>
+        <div class="field">
+          <label for="b-op">Comparison</label>
+          <select id="b-op">
+            <option value="eq" selected>is</option>
+            <option value="not-equal">is not</option>
+            <option value="gt">is greater than</option>
+            <option value="lt">is less than</option>
+            <option value="absent">never came back</option>
+          </select>
+        </div>
+        <div class="field" id="b-value-field">
+          <label for="b-value">Value</label>
+          <input type="text" id="b-value" value="true" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="b-absent">Missing key</label>
+          <div class="check">
+            <input type="checkbox" id="b-absent" checked>
+            <label for="b-absent" class="inline">Also match when the key never came back</label>
+          </div>
+          <span class="hint">On, because a missing key is <code>None</code> and <code>None == False</code> is <code>False</code>: without this branch a resource AWS never finished describing is reported as compliant.</span>
+        </div>
+        <div class="field">
+          <label for="b-severity">Severity</label>
+          <select id="b-severity">
+            <option>critical</option><option selected>high</option><option>medium</option><option>low</option><option>info</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="b-framework">Framework control</label>
+          <select id="b-framework"></select>
+          <span class="hint">Picked from the catalogue, so it cannot cite a control that does not exist.</span>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="pane">
+          <h3><span>Preview</span><button type="button" id="b-copy">Copy</button></h3>
+          <pre id="b-preview"></pre>
+        </div>
+        <div class="pane">
+          <h3><span>What it would catch</span></h3>
+          <ul class="catch" id="b-catch"></ul>
+          <p class="preview-foot" id="b-foot"></p>
+        </div>
+      </div>
+    </div>
+
+    <p class="needs-c7n">The three resources above are evaluated in your browser by the same subset of c7n that the paste tab uses, and CI fails if it ever disagrees with c7n over the catalogue. <code>custodian validate</code> still has to run on the file: it catches what a schema cannot express.</p>
+  </section>
+
   <footer class="site">
     <span>built from <a href="https://github.com/gustavoortega/cloud-custodian-compliance-policies">cloud-custodian-compliance-policies</a></span>
     <span>commit <b id="footer-commit-2"></b></span>
     <span id="footer-built"></span>
   </footer>
 </div>
+<script src="value_filter.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

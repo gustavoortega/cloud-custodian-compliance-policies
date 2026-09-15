@@ -34,6 +34,10 @@ jobs:
       # The check opens the built page in a real browser. A page whose data
       # is right and whose fetch path is wrong renders empty, and an empty
       # catalogue page reads exactly like a catalogue with nothing in it.
+      # The browser port of ValueFilter is the only answer on the site
+      # that c7n did not compute, so it is replayed against every
+      # example c7n did answer. One disagreement stops the deploy.
+      - run: node ci/check_evaluator.js
       - run: playwright install --with-deps chromium
       - run: python ci/check_site.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
