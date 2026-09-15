@@ -4,6 +4,8 @@
 
 Custodian calls them policies. Most people call them rules, the way AWS Config does. Same thing: one YAML document with a resource type, filters and an action.
 
+**Browse them: [gustavoortega.github.io/cloud-custodian-compliance-policies](https://gustavoortega.github.io/cloud-custodian-compliance-policies/)** Run any policy against a resource and see which condition decided the answer, control by control. No account, no credentials.
+
 Why this exists, and what testing these 325 offline turned up in them: [Cloud Custodian ships an engine and no rules. Here are 325.](https://gustavoortega.hashnode.dev/cloud-custodian-ships-an-engine-and-no-rules-here-are-325)
 
 <!-- badges -->
