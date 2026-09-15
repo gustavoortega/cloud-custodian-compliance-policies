@@ -9,28 +9,27 @@ policies:
     - PCI 3.7.4
     owner_tag: resource-owner
     frequency: daily
-  description: 'Customer-managed KMS keys, symmetric and enabled, that have no automatic
-
-    rotation. The first three filters are necessary: without them the control
-
-    reports AWS-managed and asymmetric keys, which cannot rotate, and it turns into
-
-    noise. CIS AWS Foundations 3.8.
-
-    '
+  description: |
+    Customer-managed symmetric KMS key whose automatic rotation is not
+    confirmed enabled. Two populations land here: rotation disabled, and
+    rotation status unreadable (AccessDenied in the run log). The second
+    is a coverage gap, not a compliant key: restore kms:GetKeyRotationStatus
+    on the policy role before closing the finding. Asymmetric, HMAC,
+    imported and custom-keystore keys cannot rotate and are excluded up
+    front rather than reported, and so are keys already disabled or pending
+    deletion. CIS AWS Foundations 3.8.
   filters:
-  - type: value
-    key: KeyManager
-    value: CUSTOMER
-  - type: value
-    key: KeyState
-    value: Enabled
-  - type: value
-    key: KeySpec
-    value: SYMMETRIC_DEFAULT
+  - KeyManager: CUSTOMER
+  - KeyState: Enabled
+  - KeySpec: SYMMETRIC_DEFAULT
+  - Origin: AWS_KMS
+  # match() runs on the GetKeyRotationStatus sub-dict, which is {} when the
+  # call was denied or unsupported. `ne true` catches False and None in one
+  # pass, where `value: false` silently passed both.
   - type: key-rotation-status
     key: KeyRotationEnabled
-    value: false
+    op: ne
+    value: true
 - name: inventory-kms-key-shared-backup-account
   resource: aws.kms-key
   description: 'KMS keys whose policy grants access to an account outside the

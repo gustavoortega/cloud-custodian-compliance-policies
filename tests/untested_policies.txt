@@ -63,7 +63,6 @@ inventory-iam-users-access-keys
 inventory-iam-users-access-keys-details
 inventory-iam-users-policies
 inventory-kms-key-shared-backup-account
-kms-cmk-rotation-disabled
 kms-customer-managed-policy-unscoped-decrypt
 kms-group-inline-policy-unscoped-decrypt
 kms-key-policy-publicly-accessible
@@ -76,9 +75,7 @@ launch-template-imdsv1-allowed
 macie-not-enabled
 rds-cluster-aurora-mysql-audit-logging-param-disabled
 rds-internet-reachable
-rds-mariadb-instance-not-encrypted-in-transit
 rds-snapshot-shared-cross-account
-rds-sqlserver-instance-not-encrypted-in-transit
 redshift-audit-logging-disabled
 redshift-not-encrypted-in-transit
 route53-public-zone-query-logging-disabled
@@ -101,4 +98,3 @@ vpc-missing-interface-endpoint-ssm
 vpc-missing-interface-endpoint-ssm-incident-contacts
 vpc-missing-interface-endpoint-ssm-incidents
 wafv2-rules-without-cloudwatch-metrics-cloudfront
-wafv2-rules-without-cloudwatch-metrics-regional

@@ -9,7 +9,7 @@ Custodian calls them policies. Most people call them rules, the way AWS Config d
 Why this exists, and what testing these 325 offline turned up in them: [Cloud Custodian ships an engine and no rules. Here are 325.](https://gustavoortega.hashnode.dev/cloud-custodian-ships-an-engine-and-no-rules-here-are-325)
 
 <!-- badges -->
-[![ci](https://github.com/gustavoortega/cloud-custodian-compliance-policies/actions/workflows/ci.yml/badge.svg)](https://github.com/gustavoortega/cloud-custodian-compliance-policies/actions/workflows/ci.yml) ![FSBP](https://img.shields.io/badge/FSBP-229%2F369_controls-2ea44f?style=flat-square) ![policies](https://img.shields.io/badge/policies-325-1f6feb?style=flat-square) ![tests](https://img.shields.io/badge/tests-231_offline-1f6feb?style=flat-square) ![license](https://img.shields.io/badge/license-Apache_2.0-6e7781?style=flat-square)
+[![ci](https://github.com/gustavoortega/cloud-custodian-compliance-policies/actions/workflows/ci.yml/badge.svg)](https://github.com/gustavoortega/cloud-custodian-compliance-policies/actions/workflows/ci.yml) ![FSBP](https://img.shields.io/badge/FSBP-229%2F369_controls-2ea44f?style=flat-square) ![policies](https://img.shields.io/badge/policies-325-1f6feb?style=flat-square) ![tests](https://img.shields.io/badge/tests-237_offline-1f6feb?style=flat-square) ![license](https://img.shields.io/badge/license-Apache_2.0-6e7781?style=flat-square)
 <!-- /badges -->
 
 ## Test the policies offline

@@ -196,11 +196,11 @@ policies:
     than a per-domain defect.
 
 
-    Both `DomainEndpointOptions` fields were observed present on every
+    `DomainEndpointOptions.EnforceHTTPS` is absent on a domain that never
 
-    domain, so a bare `op: ne` is used with no `absent` guard --
+    configured endpoint options at all, so a third branch guards that case
 
-    re-check that before reusing this pattern on another field.
+    the same way the rest of this file guards an unconfigured flag.
 
     '
   filters:
@@ -212,6 +212,9 @@ policies:
     - type: value
       key: DomainEndpointOptions.EnforceHTTPS
       value: false
+    - type: value
+      key: DomainEndpointOptions.EnforceHTTPS
+      value: absent
 - name: opensearch-fine-grained-access-control-disabled
   resource: aws.elasticsearch
   metadata:
