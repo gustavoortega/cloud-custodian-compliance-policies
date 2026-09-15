@@ -83,6 +83,9 @@ jobs:
       # is committed. A coverage index that drifts is worse than none: it
       # keeps claiming coverage that a rename or a deletion already removed.
       - run: CI=1 python ci/generate_frameworks.py
+      # The README said "Custom filters: 10", which is the file count. A file
+      # is not a filter: 13 names across 10 files, on 15 resource types.
+      - run: python ci/count_filters.py
 
   tests:
     name: behavioural tests

@@ -52,8 +52,9 @@ SOX has no numbered control list to cross against at all.
 | | |
 |---|---|
 | Policies | 325, in 42 files, one per AWS service |
-| Custom filters | 10, for controls stock c7n cannot express |
+| Custom filters | 13, in 10 files, registered on 15 resource types |
 | Tests | 231, offline, no AWS account |
+| Policies a test names | 221 of 325. The other 104 are listed in [`tests/untested_policies.txt`](tests/untested_policies.txt), and that list can only shrink |
 | Orphans | zero: no policy cites a control that does not exist |
 
 The mapping lives inside the policy:
