@@ -988,9 +988,14 @@ policies:
     key: Engine
     op: glob
     value: sqlserver-*
+  # Parameters still at the engine default carry no ParameterValue and are
+  # dropped from c7n's dict, so the key is absent for the most common case.
+  # recast also leaves unrecognised strings ('OFF') as strings. `ne true`
+  # reports anything not proven enabled, in one describe pass.
   - type: db-parameter
     key: rds.force_ssl
-    value: false
+    op: ne
+    value: true
 - name: rds-mariadb-instance-cloudwatch-logs-disabled
   resource: aws.rds
   metadata:
@@ -1039,9 +1044,14 @@ policies:
   - type: value
     key: Engine
     value: mariadb
+  # Parameters still at the engine default carry no ParameterValue and are
+  # dropped from c7n's dict, so the key is absent for the most common case.
+  # recast also leaves unrecognised strings ('OFF') as strings. `ne true`
+  # reports anything not proven enabled, in one describe pass.
   - type: db-parameter
     key: require_secure_transport
-    value: false
+    op: ne
+    value: true
 - name: rds-proxy-tls-not-required
   resource: aws.rds-proxy
   metadata:

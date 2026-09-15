@@ -164,11 +164,14 @@ policies:
   query:
   - Scope: REGIONAL
   filters:
-  - type: web-acl-rules
-    attrs:
-    - type: value
-      key: VisibilityConfig.CloudWatchMetricsEnabled
-      value: false
+  # Inert until this change: the web-acl-rules filter yields items shaped
+  # {Type, Name, Rules}, so VisibilityConfig never sat at the top level and
+  # this matched nothing for any ACL. GetWebACL already carries Rules[] with
+  # VisibilityConfig on every ACL-level rule, which is what this reads now.
+  # Rules inside customer rule groups are not visible from this resource.
+  - type: value
+    key: "Rules[?VisibilityConfig.CloudWatchMetricsEnabled != `true`]"
+    value: not-null
 - name: wafv2-rules-without-cloudwatch-metrics-cloudfront
   resource: aws.wafv2
   metadata:
@@ -197,8 +200,11 @@ policies:
   query:
   - Scope: CLOUDFRONT
   filters:
-  - type: web-acl-rules
-    attrs:
-    - type: value
-      key: VisibilityConfig.CloudWatchMetricsEnabled
-      value: false
+  # Inert until this change: the web-acl-rules filter yields items shaped
+  # {Type, Name, Rules}, so VisibilityConfig never sat at the top level and
+  # this matched nothing for any ACL. GetWebACL already carries Rules[] with
+  # VisibilityConfig on every ACL-level rule, which is what this reads now.
+  # Rules inside customer rule groups are not visible from this resource.
+  - type: value
+    key: "Rules[?VisibilityConfig.CloudWatchMetricsEnabled != `true`]"
+    value: not-null
