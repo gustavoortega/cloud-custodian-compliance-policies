@@ -27,7 +27,9 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: '3.11'
-      - run: pip install c7n pyyaml playwright c7n-kit
+      # c7n-kit>=1.1.0 is the first release with trace(), which is what
+      # computes the per-node answers this site shows.
+      - run: pip install c7n pyyaml playwright "c7n-kit>=1.1.0"
       - run: python ci/build_catalog.py
       # The check opens the built page in a real browser. A page whose data
       # is right and whose fetch path is wrong renders empty, and an empty
