@@ -15,7 +15,7 @@ Why this exists, and what testing these 325 offline turned up in them: [Cloud Cu
 ```console
 $ git clone https://github.com/gustavoortega/cloud-custodian-compliance-policies
 $ cd cloud-custodian-compliance-policies
-$ pip install c7n pytest git+https://github.com/gustavoortega/c7n-kit
+$ pip install c7n pytest c7n-kit
 
 $ pytest -q
 231 passed in 4.5s
