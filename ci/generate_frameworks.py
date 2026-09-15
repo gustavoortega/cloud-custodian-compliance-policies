@@ -288,32 +288,47 @@ def badges():
     return "README.md", changed
 
 
-os.makedirs(OUT, exist_ok=True)
-written = [badges()]
+def main():
+    """Regenerates every page and reports which ones were stale.
 
-for key, (path, title, prefix, grouping) in CATALOGS.items():
-    if not os.path.exists(path):
-        continue
-    target = f"{OUT}/{key}.md"
-    body = page(path, title, prefix, grouping)
-    changed = (not os.path.exists(target)
-               or open(target, encoding="utf-8").read() != body)
-    open(target, "w", encoding="utf-8").write(body)
-    written.append((target, changed))
+    This lives in a function rather than at module level because another
+    script now imports `read_catalog`, `read_policies` and `CATALOGS` from
+    here: at module level, importing this file rewrote README.md and
+    frameworks/*.md as a side effect of the import, which is a surprising
+    thing for an import to do and would have made the drift check depend
+    on whoever imported it last.
+    """
+    os.makedirs(OUT, exist_ok=True)
+    written = [badges()]
 
-body = sox_page()
-if body:
-    target = f"{OUT}/sox-itgc.md"
-    changed = (not os.path.exists(target)
-               or open(target, encoding="utf-8").read() != body)
-    open(target, "w", encoding="utf-8").write(body)
-    written.append((target, changed))
+    for key, (path, title, prefix, grouping) in CATALOGS.items():
+        if not os.path.exists(path):
+            continue
+        target = f"{OUT}/{key}.md"
+        body = page(path, title, prefix, grouping)
+        changed = (not os.path.exists(target)
+                   or open(target, encoding="utf-8").read() != body)
+        open(target, "w", encoding="utf-8").write(body)
+        written.append((target, changed))
 
-for target, changed in written:
-    print(f"{'regenerated' if changed else 'unchanged  '}  {target}")
+    body = sox_page()
+    if body:
+        target = f"{OUT}/sox-itgc.md"
+        changed = (not os.path.exists(target)
+                   or open(target, encoding="utf-8").read() != body)
+        open(target, "w", encoding="utf-8").write(body)
+        written.append((target, changed))
 
-drifted = [t for t, changed in written if changed]
-if drifted and os.environ.get("CI"):
-    print(f"\n{len(drifted)} generated page(s) were out of date. "
-          f"Run ci/generate_frameworks.py and commit the result.")
-    sys.exit(1)
+    for target, changed in written:
+        print(f"{'regenerated' if changed else 'unchanged  '}  {target}")
+
+    drifted = [t for t, changed in written if changed]
+    if drifted and os.environ.get("CI"):
+        print(f"\n{len(drifted)} generated page(s) were out of date. "
+              f"Run ci/generate_frameworks.py and commit the result.")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
