@@ -1,0 +1,59 @@
+name: site
+
+# Builds the browsable catalogue and publishes it to GitHub Pages.
+#
+# The site's data is never committed: it is generated from the policies on
+# every push, so a page claiming coverage that a rename already removed
+# cannot exist. There is no stored copy to go stale.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build and check the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: '3.11'
+      - run: pip install c7n pyyaml playwright c7n-kit
+      - run: python ci/build_catalog.py
+      # The check opens the built page in a real browser. A page whose data
+      # is right and whose fetch path is wrong renders empty, and an empty
+      # catalogue page reads exactly like a catalogue with nothing in it.
+      - run: playwright install --with-deps chromium
+      - run: python ci/check_site.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        if: failure()
+        with:
+          name: site-screenshots
+          path: site-check*.png
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3.0.1
+        with:
+          path: site
+
+  deploy:
+    name: publish to Pages
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
