@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud Custodian policies, and what they answer</title>
+<meta name="description" content="Run any of 325 Cloud Custodian policies against a resource and see which condition decided the answer. No AWS account, no credentials.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%9B%A1%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <div class="brand">
+      <span class="mark">c7</span>
+      <h1>Cloud Custodian policies</h1>
+    </div>
+    <nav role="tablist" aria-label="Sections">
+      <button role="tab" id="tab-run" aria-controls="screen-run" aria-selected="true">Run a policy</button>
+      <button role="tab" id="tab-controls" aria-controls="screen-controls" aria-selected="false">Controls</button>
+    </nav>
+  </header>
+
+  <section class="screen" id="screen-run" role="tabpanel" aria-labelledby="tab-run">
+    <div class="hero">
+      <span class="kicker">FSBP · PCI DSS 4.0 · CIS AWS · SOX ITGC</span>
+      <h2>Run a policy on a resource and see <em>what it answers</em>.</h2>
+      <p class="lede">Pick a policy, pick a resource, see which condition decided it. <b>No AWS account, no credentials.</b></p>
+
+      <div class="trust">
+        <div><span class="n accent" id="stat-policies">…</span><span class="t" id="stat-files">policies</span></div>
+        <div><span class="n" id="stat-examples">…</span><span class="t">example resources traced</span></div>
+        <div><span class="n" id="stat-fsbp">…</span><span class="t">FSBP controls covered</span></div>
+        <div><span class="n clean">0</span><span class="t">credentials required</span></div>
+      </div>
+    </div>
+
+    <div class="playground">
+      <div class="pg-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <select id="policy-select" aria-label="Policy"></select>
+        <span class="spacer"></span>
+        <span class="creds">runs offline</span>
+      </div>
+
+      <p class="pg-howto">Pick a resource in the middle. The answer is on the right, condition by condition.</p>
+
+      <div class="triptych">
+        <div class="col">
+          <h3><span><i>1</i> The rule</span><span class="file" id="yaml-file"></span></h3>
+          <pre id="yaml"></pre>
+        </div>
+        <div class="col">
+          <h3><span><i>2</i> The resource it runs on</span></h3>
+          <div class="example-tabs" id="example-tabs"></div>
+          <pre id="resource-json"></pre>
+        </div>
+        <div class="col">
+          <h3><span><i>3</i> The answer</span></h3>
+          <div class="verdict-head" id="verdict-head"></div>
+          <ul class="nodes" id="nodes"></ul>
+        </div>
+      </div>
+
+      <div class="pg-foot">
+        <span>answers computed by c7n itself, at build time</span>
+        <span>commit <b id="footer-commit">…</b></span>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <h3>Three answers, not two</h3>
+      <p>Most tools have two. The third is why this one exists.</p>
+    </div>
+
+    <div class="board">
+      <div class="board-row two"><span class="name fires">fires</span><span class="val">the condition matched, this is a finding</span></div>
+      <div class="board-row two"><span class="name clean">no match</span><span class="val">c7n evaluated it, nothing to report</span></div>
+      <div class="board-row two"><span class="name unknown">unknown</span><span class="val">it needs an AWS call, so it is never a pass</span></div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-controls" role="tabpanel" aria-labelledby="tab-controls" hidden>
+    <div class="section-head">
+      <h3>Every control, covered or not</h3>
+      <p>Listing only the wins reads as full coverage.</p>
+    </div>
+
+    <div class="board" id="coverage"></div>
+
+    <p class="board-note">Only FSBP gets a bar. The other catalogues are partial: the count is real, the denominator is not.</p>
+
+    <div class="toolbar">
+      <input type="search" id="ctl-search" placeholder="Filter controls or policy names" spellcheck="false">
+      <div class="chips" id="fw-chips">
+        <button data-fw="fsbp" aria-pressed="true">FSBP</button>
+        <button data-fw="pci-4.0" aria-pressed="false">PCI DSS 4.0</button>
+        <button data-fw="cis-aws" aria-pressed="false">CIS AWS</button>
+      </div>
+      <span class="count-out" id="ctl-count"></span>
+    </div>
+
+    <div class="rows" id="ctl-rows"></div>
+  </section>
+
+  <footer class="site">
+    <span>built from <a href="https://github.com/gustavoortega/cloud-custodian-compliance-policies">cloud-custodian-compliance-policies</a></span>
+    <span>commit <b id="footer-commit-2"></b></span>
+    <span id="footer-built"></span>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
